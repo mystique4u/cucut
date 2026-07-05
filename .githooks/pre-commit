@@ -1,0 +1,27 @@
+#!/bin/bash
+# Git pre-commit hook — fast local checks via pre-commit when installed.
+set -euo pipefail
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+if command -v pre-commit &>/dev/null; then
+  exec pre-commit run --hook-stage pre-commit
+fi
+
+# Fallback: ruff + pytest on staged Python files
+STAGED="$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py$' || true)"
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+if [ -d .venv ]; then
+  # shellcheck disable=SC1091
+  source .venv/bin/activate
+fi
+
+if command -v ruff &>/dev/null; then
+  echo "$STAGED" | xargs ruff check
+  echo "$STAGED" | xargs ruff format --check
+fi
+
+pytest -q

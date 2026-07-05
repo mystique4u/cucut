@@ -1,0 +1,15 @@
+# Service/meta paths — changes here do NOT trigger CI, Docker builds, or version bumps.
+# One pattern per line. Matches use path prefix or glob (*, **).
+# Application code is everything not listed here.
+
+.github/**
+.agents/**
+.continue/**
+.cursor/**
+.githooks/**
+scripts/**
+skills-lock.json
+AGENTS.md
+README.md
+CONTRIBUTING.md
+CHANGELOG.md

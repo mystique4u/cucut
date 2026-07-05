@@ -1,0 +1,9 @@
+#!/bin/bash
+# Git pre-push hook — runs the same checks as CI.
+set -euo pipefail
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+PUSH_REFS_FILE="$(mktemp)"
+trap 'rm -f "$PUSH_REFS_FILE"' EXIT
+cat > "$PUSH_REFS_FILE"
+export PUSH_REFS_FILE
+bash "$REPO_ROOT/scripts/pre-push-check.sh"
