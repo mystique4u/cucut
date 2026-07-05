@@ -106,7 +106,7 @@ Inspired by [speedrun](https://github.com/benjaminjackson/speedrun) (invert + co
 
 ```bash
 pytest
-# pre-push hook runs full check on git push — no manual script needed
+# git hooks + CI run: bash scripts/validate.sh
 ```
 
 ## DevOps and agents

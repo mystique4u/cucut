@@ -18,7 +18,7 @@ Requires **ffmpeg** and **ffprobe** in `PATH`.
 1. Branch from `main`: `feature/...` or `fix/...`
 2. Make focused changes with tests
 3. Update `CHANGELOG.md` under `[Unreleased]`
-4. `git commit` / `git push` — **hooks run checks automatically**
+4. `git commit` / `git push` — hooks run **`scripts/validate.sh`** (CI parity)
 5. Open PR to `main`
 
 One-time hook setup: `bash scripts/setup-hooks.sh && pre-commit install-hooks`
@@ -44,15 +44,18 @@ Commit-msg hook validates format via `conventional-pre-commit`.
 - Match existing patterns in surrounding code
 - Tests for logic in `segments.py`, `csvio.py`
 
-## Before push
+## Validation (CI parity)
 
-Checks run **automatically** via `.githooks/pre-push` on every `git push`.
-
-Optional (debug without pushing):
+**Automatic** — hooks and CI all call the same script:
 
 ```bash
-bash scripts/pre-push-check.sh
+bash scripts/validate.sh            # pre-commit hook, CI
+bash scripts/validate.sh --pre-push # pre-push hook (+ version gate on main)
 ```
+
+Checks: secrets scan → `pre-commit run --all-files` → `pytest` → version consistency.
+
+Legacy alias: `bash scripts/pre-push-check.sh` → `validate.sh --pre-push`
 
 ## Releasing
 

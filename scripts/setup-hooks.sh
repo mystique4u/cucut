@@ -11,9 +11,8 @@ chmod +x .githooks/pre-commit .githooks/pre-push .githooks/commit-msg 2>/dev/nul
 
 echo "✅ git hooksPath → .githooks"
 echo ""
-echo "Hooks active:"
-echo "  pre-commit  → pre-commit run (ruff, yaml, …)"
-echo "  commit-msg  → conventional commits"
-echo "  pre-push    → scripts/pre-push-check.sh"
+echo "Hooks active (all call scripts/validate.sh — same as CI):"
+echo "  pre-commit  → validate.sh"
+echo "  pre-push    → validate.sh --pre-push"
 echo ""
 echo "Install pre-commit env once: pip install -e '.[dev]' && pre-commit install-hooks"

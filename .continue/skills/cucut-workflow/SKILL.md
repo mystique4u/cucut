@@ -20,20 +20,20 @@ Never commit directly to `main`.
 
 ## Pre-push validation
 
-**Automatic** — `.githooks/pre-push` calls `scripts/pre-push-check.sh` on every push.
-
-One-time setup:
+**Single script** — `scripts/validate.sh` — used by CI, pre-commit, and pre-push hooks.
 
 ```bash
 bash scripts/setup-hooks.sh
 pre-commit install-hooks
 ```
 
-Optional manual run (same checks, no push):
+| Trigger | Command |
+|---------|---------|
+| `git commit` | `validate.sh` |
+| `git push` | `validate.sh --pre-push` |
+| GitHub Actions | `validate.sh` |
 
-```bash
-bash scripts/pre-push-check.sh
-```
+No separate manual steps — hooks match CI exactly.
 
 ### What gets checked
 
@@ -76,7 +76,7 @@ Service-only pushes skip checks — see `scripts/service-paths.list`.
 
 ```
 - [ ] Hooks installed (`bash scripts/setup-hooks.sh`)
-- [ ] `git push` passes (pre-push hook = full validation)
+- [ ] `git commit` / `git push` pass (hooks = CI via `validate.sh`)
 - [ ] CHANGELOG.md updated under [Unreleased]
 - [ ] Tests for logic changes
 - [ ] bash scripts/bump-version.sh before push to main (app code)

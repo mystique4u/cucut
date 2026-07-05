@@ -14,13 +14,13 @@ Read [AGENTS.md](AGENTS.md) first.
 - One logical change per PR
 - Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`)
 
-## Before every push
+## Before push / commit
 
-Nothing manual — **`.githooks/pre-push`** runs `pre-push-check.sh` automatically.
+Git hooks run **`bash scripts/validate.sh`** automatically (same as CI). No manual scripts needed.
 
 One-time setup: `bash scripts/setup-hooks.sh`
 
-Optional debug: `bash scripts/pre-push-check.sh` (same as hook, without pushing)
+Optional: `bash scripts/validate.sh` or `bash scripts/validate.sh --pre-push`
 
 ## Documentation
 

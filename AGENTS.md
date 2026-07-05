@@ -88,19 +88,19 @@ bash scripts/bump-version.sh
 git add pyproject.toml src/cucut/__init__.py CHANGELOG.md
 ```
 
-### 3. Commit and push — hooks validate automatically
+### 3. Commit and push — hooks run full CI validation
 
-After one-time `bash scripts/setup-hooks.sh`:
+After one-time `bash scripts/setup-hooks.sh`, every hook calls **`scripts/validate.sh`** (same as GitHub Actions):
 
-| Git action | Hook | What runs |
-|------------|------|-----------|
-| `git commit` | pre-commit | ruff, yaml/toml checks |
+| Git action | Hook | Script |
+|------------|------|--------|
+| `git commit` | pre-commit | `scripts/validate.sh` |
 | `git commit` | commit-msg | conventional commit format |
-| `git push` | pre-push | tests, secrets, version gate |
+| `git push` | pre-push | `scripts/validate.sh --pre-push` |
 
-No need to run `pre-push-check.sh` by hand — the pre-push hook does it.
+CI job runs `bash scripts/validate.sh` — identical checks.
 
-Manual `bash scripts/pre-push-check.sh` only if you want to check without pushing.
+Optional manual run: `bash scripts/validate.sh`
 
 ## Service paths (no version bump / skip CI checks)
 
