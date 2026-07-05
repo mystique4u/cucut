@@ -1,49 +1,49 @@
 # cucut
 
-CLI для поиска «мёртвых» (freeze) участков в DJI/MP4 и lossless-обрезки через ffmpeg.
+CLI to find frozen/dead segments in DJI/MP4 videos and lossless-trim them with ffmpeg.
 
-Двухфазный workflow: **scan → review → trim**. Для GUI-ревью — [LosslessCut](https://github.com/mifi/lossless-cut); для batch-scan с GUI — опционально [frame-checker](https://github.com/kuvk/frame-checker).
+Two-phase workflow: **scan → review → trim**. For GUI review use [LosslessCut](https://github.com/mifi/lossless-cut); optional batch scan GUI: [frame-checker](https://github.com/kuvk/frame-checker).
 
-## Требования
+## Requirements
 
 - Python 3.11+
-- ffmpeg / ffprobe в `PATH`
+- ffmpeg / ffprobe on `PATH`
 
-## Установка
+## Install
 
 ```bash
 cd ~/dev/repos/cucut
 pip install -e .
-# или без установки:
+# or with dev tools:
 pip install -e ".[dev]"
 ```
 
-## Быстрый старт
+## Quick start
 
 ```bash
-# 1. Скан папки с роликами
+# 1. Scan a folder of clips
 cucut scan ~/Videos/DJI -o segments.csv
 
-# 2. Ревью CSV (LibreOffice / VS Code / LosslessCut)
+# 2. Review CSV (LibreOffice / VS Code / LosslessCut)
 #    action: remove | keep | review
-#    high-confidence freeze → remove по умолчанию
+#    high-confidence freeze → remove by default
 
-# 3. LosslessCut CSV для визуального ревью (опционально)
+# 3. LosslessCut CSV for visual review (optional)
 cucut export segments.csv -o losslesscut/ --mode dead
 cucut gui --tool losslesscut --csv losslesscut/DJI_001.losslesscut.csv ~/Videos/DJI/DJI_001.mp4
 
-# 4. Lossless trim (оригиналы не трогаются)
+# 4. Lossless trim (originals untouched)
 cucut trim segments.csv -o ~/Videos/DJI-trimmed/
 ```
 
-## Команды
+## Commands
 
-| Команда | Описание |
-|---------|----------|
+| Command | Description |
+|---------|-------------|
 | `cucut scan INPUT` | Batch freezedetect → `segments.csv` |
-| `cucut trim CSV` | Вырезать `action=remove`, склеить keep через `-c copy` |
+| `cucut trim CSV` | Cut `action=remove`, concat keep via `-c copy` |
 | `cucut export CSV` | LosslessCut CSV (`Start,End,Name`) |
-| `cucut gui` | Запуск LosslessCut или frame-checker |
+| `cucut gui` | Launch LosslessCut or frame-checker |
 
 ### scan
 
@@ -53,7 +53,7 @@ cucut scan ~/Videos/DJI -o segments.csv \
   --min-duration 3
 ```
 
-Параметры `freezedetect` (стартовые): `noise=-60dB`, `min_duration=3s`.
+Default `freezedetect` params: `noise=-60dB`, `min_duration=3s`.
 
 ### Review CSV
 
@@ -61,29 +61,29 @@ cucut scan ~/Videos/DJI -o segments.csv \
 |------|-----------|---------|----------|----------|------------|--------|----------|
 | DJI_001.mp4 | 98.200 | 142.500 | 600.000 | 44.300 | high | remove | no |
 
-- **duration** — длина файла (сек)
-- **dead_sec** — длина freeze-интервала
-- **action**: `remove` (вырезать), `keep` (оставить freeze), `review` (решить вручную)
+- **duration** — file length (seconds)
+- **dead_sec** — freeze interval length
+- **action**: `remove` (cut out), `keep` (keep freeze), `review` (decide manually)
 
 ### trim
 
 ```bash
-cucut trim segments.csv -o ./trimmed/ --dry-run   # план без ffmpeg
+cucut trim segments.csv -o ./trimmed/ --dry-run   # plan only, no ffmpeg
 cucut trim segments.csv -o ./trimmed/
 ```
 
-Dead intervals инвертируются в keep; склейка через concat demuxer (`inpoint`/`outpoint`), как в [speedrun](https://github.com/benjaminjackson/speedrun).
+Dead intervals are inverted to keep; stitched via concat demuxer (`inpoint`/`outpoint`), like [speedrun](https://github.com/benjaminjackson/speedrun).
 
-**Ограничение:** при `-c copy` точность cut ± keyframe (0.5–2 с). Оригиналы не изменяются; выход: `*.trimmed.mp4`.
+**Limitation:** with `-c copy`, cut accuracy is ± keyframe (0.5–2 s). Originals are not modified; output: `*.trimmed.mp4`.
 
 ### export (LosslessCut)
 
 ```bash
-cucut export segments.csv -o losslesscut/ --mode dead   # freeze для ревью
-cucut export segments.csv -o losslesscut/ --mode keep    # keep-сегменты для экспорта
+cucut export segments.csv -o losslesscut/ --mode dead   # freezes for review
+cucut export segments.csv -o losslesscut/ --mode keep    # keep segments for export
 ```
 
-Формат: заголовок `Start,End,Name`, время в секундах — совместимо с LosslessCut import.
+Format: header `Start,End,Name`, times in seconds — compatible with LosslessCut import.
 
 ### gui
 
@@ -92,7 +92,7 @@ cucut gui --tool losslesscut DJI_001.mp4
 cucut gui --tool frame-checker
 ```
 
-## Архитектура
+## Architecture
 
 ```text
 scan (freezedetect) → segments.csv → [review] → trim (-c copy concat)
@@ -100,23 +100,23 @@ scan (freezedetect) → segments.csv → [review] → trim (-c copy concat)
                     export → LosslessCut CSV → gui
 ```
 
-Вдохновение: [speedrun](https://github.com/benjaminjackson/speedrun) (invert + concat), [deadframe](https://github.com/agatan/deadframe) (детект, `-print`), [frame-checker](https://github.com/kuvk/frame-checker) (batch GUI scan), [LosslessCut](https://github.com/mifi/lossless-cut) (ревью + lossless export).
+Inspired by [speedrun](https://github.com/benjaminjackson/speedrun) (invert + concat), [deadframe](https://github.com/agatan/deadframe) (detect, `-print`), [frame-checker](https://github.com/kuvk/frame-checker) (batch GUI scan), [LosslessCut](https://github.com/mifi/lossless-cut) (review + lossless export).
 
-## Тесты
+## Tests
 
 ```bash
 pytest
 # pre-push hook runs full check on git push — no manual script needed
 ```
 
-## DevOps и агенты
+## DevOps and agents
 
-- [AGENTS.md](AGENTS.md) — entrypoint для Cursor/Continue
+- [AGENTS.md](AGENTS.md) — entrypoint for Cursor/Continue
 - [CONTRIBUTING.md](CONTRIBUTING.md) — workflow, conventional commits
-- `git config core.hooksPath .githooks` — pre-commit / pre-push
-- Skills: `.agents/skills/` (cucut-*, caveman для экономии токенов)
+- `bash scripts/setup-hooks.sh` — enable pre-commit / pre-push hooks
+- Skills: `.agents/skills/` (cucut-*, caveman for token savings)
 - CI: `.github/workflows/ci.yml`
 
-## Лицензия
+## License
 
 MIT

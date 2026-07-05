@@ -21,6 +21,12 @@ Starting point for AI agents (Cursor, Continue, Claude Code) in this repository.
 | `.agents/skills/cucut-project/` | Architecture and module layout |
 | `.agents/skills/cucut-workflow/` | Git flow, pre-push, docs |
 | `.agents/skills/cucut-versioning/` | SemVer on every main push |
+| `.agents/skills/cucut-language/` | **English-only** repo content policy |
+
+## Language (mandatory)
+
+**English only** in code, comments, docs, CLI messages, commits, and skills you write.
+Read `.agents/skills/cucut-language/SKILL.md`. User chat may be any language; repo files must be English.
 
 ## Token efficiency skills
 

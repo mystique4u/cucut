@@ -47,6 +47,11 @@ bash scripts/pre-push-check.sh
 
 Service-only pushes skip checks — see `scripts/service-paths.list`.
 
+## Language (required)
+
+- **English only** in code, comments, docstrings, CLI messages, docs, commits
+- See `.agents/skills/cucut-language/SKILL.md`
+
 ## Documentation (required)
 
 | Change type | Update |

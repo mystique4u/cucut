@@ -38,6 +38,7 @@ Commit-msg hook validates format via `conventional-pre-commit`.
 
 ## Code style
 
+- **English only** — code, comments, docs, CLI messages (see `cucut-language` skill)
 - **Modular**: one responsibility per module (see `AGENTS.md`)
 - **Ruff** for lint + format (`ruff check`, `ruff format`)
 - Match existing patterns in surrounding code

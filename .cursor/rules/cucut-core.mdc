@@ -36,6 +36,11 @@ Update in the same PR as code:
 - Before push to `main` with app code: `bash scripts/bump-version.sh` + finalize CHANGELOG
 - Service paths (`.cursor/`, `.agents/`, `scripts/`, docs-only) skip version bump — see `scripts/service-paths.list`
 
+## Language
+
+**English only** in the repository — code, comments, docs, CLI output, commits.
+See `.agents/skills/cucut-language/SKILL.md`. Never add Russian or other languages to repo files.
+
 ## Modular code
 
 | Module | Responsibility only |

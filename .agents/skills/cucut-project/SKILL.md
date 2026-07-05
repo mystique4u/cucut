@@ -61,3 +61,4 @@ scripts/             # pre-push, bump-version, secret scan
 ## Entrypoint for agents
 
 Read [AGENTS.md](../../AGENTS.md) at repo root before making changes.
+All repo content must be **English only** — see `cucut-language` skill.
