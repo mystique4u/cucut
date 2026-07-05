@@ -1,0 +1,11 @@
+#!/bin/bash
+# Git commit-msg hook — conventional commit format via pre-commit.
+set -euo pipefail
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+if command -v pre-commit &>/dev/null; then
+  exec pre-commit run --hook-stage commit-msg --commit-msg-filename "$1"
+fi
+
+exit 0

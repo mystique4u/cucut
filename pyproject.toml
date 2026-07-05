@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cucut"
-version = "0.1.0"
+version = "0.1.1"
 description = "Detect and trim frozen/dead segments in DJI and other MP4 videos (lossless ffmpeg copy)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -38,6 +38,7 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = [".agents", ".continue"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

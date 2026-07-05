@@ -16,17 +16,11 @@ Read [AGENTS.md](AGENTS.md) first.
 
 ## Before every push
 
-```bash
-bash scripts/pre-push-check.sh
-```
+Nothing manual — **`.githooks/pre-push`** runs `pre-push-check.sh` automatically.
 
-Enable hooks:
+One-time setup: `bash scripts/setup-hooks.sh`
 
-```bash
-git config core.hooksPath .githooks
-pre-commit install
-pre-commit install --hook-type commit-msg
-```
+Optional debug: `bash scripts/pre-push-check.sh` (same as hook, without pushing)
 
 ## Documentation
 

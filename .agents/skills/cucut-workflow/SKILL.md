@@ -18,18 +18,21 @@ description: >-
 
 Never commit directly to `main`.
 
-## Pre-push validation (required)
+## Pre-push validation
+
+**Automatic** — `.githooks/pre-push` calls `scripts/pre-push-check.sh` on every push.
+
+One-time setup:
+
+```bash
+bash scripts/setup-hooks.sh
+pre-commit install-hooks
+```
+
+Optional manual run (same checks, no push):
 
 ```bash
 bash scripts/pre-push-check.sh
-```
-
-Enable hooks:
-
-```bash
-git config core.hooksPath .githooks
-pre-commit install
-pre-commit install --hook-type commit-msg
 ```
 
 ### What gets checked
@@ -67,7 +70,8 @@ Service-only pushes skip checks — see `scripts/service-paths.list`.
 ## PR checklist
 
 ```
-- [ ] bash scripts/pre-push-check.sh passes
+- [ ] Hooks installed (`bash scripts/setup-hooks.sh`)
+- [ ] `git push` passes (pre-push hook = full validation)
 - [ ] CHANGELOG.md updated under [Unreleased]
 - [ ] Tests for logic changes
 - [ ] bash scripts/bump-version.sh before push to main (app code)

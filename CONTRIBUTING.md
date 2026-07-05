@@ -7,9 +7,8 @@ git clone <repo-url> cucut && cd cucut
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-pre-commit install
-pre-commit install --hook-type commit-msg
-git config core.hooksPath .githooks
+bash scripts/setup-hooks.sh
+pre-commit install-hooks   # download hook envs (not into .git/hooks)
 ```
 
 Requires **ffmpeg** and **ffprobe** in `PATH`.
@@ -19,8 +18,10 @@ Requires **ffmpeg** and **ffprobe** in `PATH`.
 1. Branch from `main`: `feature/...` or `fix/...`
 2. Make focused changes with tests
 3. Update `CHANGELOG.md` under `[Unreleased]`
-4. Run `bash scripts/pre-push-check.sh`
+4. `git commit` / `git push` — **hooks run checks automatically**
 5. Open PR to `main`
+
+One-time hook setup: `bash scripts/setup-hooks.sh && pre-commit install-hooks`
 
 ## Commits
 
@@ -44,21 +45,22 @@ Commit-msg hook validates format via `conventional-pre-commit`.
 
 ## Before push
 
+Checks run **automatically** via `.githooks/pre-push` on every `git push`.
+
+Optional (debug without pushing):
+
 ```bash
 bash scripts/pre-push-check.sh
 ```
-
-Same checks run in CI (`.github/workflows/ci.yml`).
 
 ## Releasing
 
 ```bash
 bash scripts/bump-version.sh        # or patch/minor/major
 # Finalize CHANGELOG [Unreleased] → [X.Y.Z]
-bash scripts/pre-push-check.sh
 git commit -m "chore(release): vX.Y.Z"
 git tag vX.Y.Z
-git push origin main --tags
+git push origin main --tags         # pre-push hook validates
 ```
 
 ## What not to commit

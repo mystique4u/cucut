@@ -105,5 +105,5 @@ PY
 echo ""
 echo "Next steps:"
 echo "  1. Move CHANGELOG.md [Unreleased] entries to [X.Y.Z] - date"
-echo "  2. bash scripts/pre-push-check.sh"
+echo "  2. git push   # pre-push hook validates automatically"
 echo "  3. git add pyproject.toml src/cucut/__init__.py CHANGELOG.md"

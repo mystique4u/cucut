@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-05
+
+### Fixed
+
+- Git hooks run checks automatically; no manual `pre-push-check.sh` before push
+- Added `setup-hooks.sh` and `commit-msg` hook (works with `core.hooksPath`)
+- Excluded vendored `.agents`/`.continue` skills from ruff in pre-commit
+
 ## [0.1.0] - 2026-07-05
 
 ### Added
@@ -19,5 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DevOps: pre-commit, githooks, CI, SemVer scripts
 - Cursor rules, hooks, and agent skills (cucut + caveman suite)
 
-[Unreleased]: https://github.com/optimus/cucut/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/optimus/cucut/releases/tag/v0.1.0
+[Unreleased]: https://github.com/mystique4u/cucut/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/mystique4u/cucut/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/mystique4u/cucut/releases/tag/v0.1.0

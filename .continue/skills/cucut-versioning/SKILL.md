@@ -45,11 +45,11 @@ Auto-detect from conventional commits since last `v*` tag:
 Then move `CHANGELOG.md` `[Unreleased]` → `[X.Y.Z] - date`.
 
 ```bash
-bash scripts/pre-push-check.sh
+bash scripts/bump-version.sh
+# Move [Unreleased] → [X.Y.Z] - date
 git add pyproject.toml src/cucut/__init__.py CHANGELOG.md
 git commit -m "chore(release): vX.Y.Z"
-git tag vX.Y.Z
-git push origin main --tags
+git push origin main --tags   # pre-push hook validates
 ```
 
 ## Pre-push gate
@@ -67,5 +67,6 @@ git push origin main --tags
 - [ ] bash scripts/bump-version.sh [patch|minor|major]
 - [ ] CHANGELOG [Unreleased] → [X.Y.Z] with date
 - [ ] bash scripts/check-version.sh passes
-- [ ] bash scripts/pre-push-check.sh passes
+- [ ] bash scripts/check-version.sh passes
+- [ ] `git push` passes (pre-push hook)
 ```

@@ -106,7 +106,7 @@ scan (freezedetect) → segments.csv → [review] → trim (-c copy concat)
 
 ```bash
 pytest
-bash scripts/pre-push-check.sh   # полная проверка перед push
+# pre-push hook runs full check on git push — no manual script needed
 ```
 
 ## DevOps и агенты

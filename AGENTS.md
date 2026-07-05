@@ -82,19 +82,19 @@ bash scripts/bump-version.sh
 git add pyproject.toml src/cucut/__init__.py CHANGELOG.md
 ```
 
-### 3. Validate before push
+### 3. Commit and push — hooks validate automatically
 
-```bash
-bash scripts/pre-push-check.sh
-```
+After one-time `bash scripts/setup-hooks.sh`:
 
-Enable hooks once:
+| Git action | Hook | What runs |
+|------------|------|-----------|
+| `git commit` | pre-commit | ruff, yaml/toml checks |
+| `git commit` | commit-msg | conventional commit format |
+| `git push` | pre-push | tests, secrets, version gate |
 
-```bash
-git config core.hooksPath .githooks
-pre-commit install
-pre-commit install --hook-type commit-msg
-```
+No need to run `pre-push-check.sh` by hand — the pre-push hook does it.
+
+Manual `bash scripts/pre-push-check.sh` only if you want to check without pushing.
 
 ## Service paths (no version bump / skip CI checks)
 

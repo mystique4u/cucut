@@ -1,6 +1,7 @@
 #!/bin/bash
 # Pre-push validation for cucut — mirrors CI locally.
-# Run: bash scripts/pre-push-check.sh
+# Called automatically by .githooks/pre-push on every git push.
+# Manual run (optional): bash scripts/pre-push-check.sh
 
 set -euo pipefail
 
