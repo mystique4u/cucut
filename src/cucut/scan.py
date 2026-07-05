@@ -27,6 +27,9 @@ def scan_path(
     *,
     noise_db: float,
     min_duration: float,
+    hwaccel: str | None = None,
+    scale_width: int | None = None,
+    sample_fps: float | None = None,
     on_progress: Callable[[float], None] | None = None,
 ) -> list[SegmentRow]:
     file_duration = probe_duration(str(path))
@@ -35,6 +38,9 @@ def scan_path(
         str(path),
         noise_db=noise_db,
         min_duration=min_duration,
+        hwaccel=hwaccel,
+        scale_width=scale_width,
+        sample_fps=sample_fps,
         on_progress=on_progress,
     )
 
@@ -55,10 +61,13 @@ def scan_directory(
     output: Path,
     *,
     noise_db: float = -60.0,
-    min_duration: float = 3.0,
+    min_duration: float = 5.0,
+    hwaccel: str | None = None,
+    scale_width: int | None = None,
+    sample_fps: float | None = None,
     recursive: bool = True,
     on_file: Callable[..., None] | None = None,
-) -> list[SegmentRow]:
+) -> tuple[list[SegmentRow], int]:
     videos = list(iter_videos(root, recursive=recursive))
     all_rows: list[SegmentRow] = []
 
@@ -81,9 +90,12 @@ def scan_directory(
             video,
             noise_db=noise_db,
             min_duration=min_duration,
+            hwaccel=hwaccel,
+            scale_width=scale_width,
+            sample_fps=sample_fps,
             on_progress=make_progress(),
         )
         all_rows.extend(rows)
 
     write_segments(output, all_rows)
-    return all_rows
+    return all_rows, len(videos)

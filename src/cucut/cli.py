@@ -10,6 +10,8 @@ from cucut import __version__
 from cucut.export import export_losslesscut
 from cucut.ffmpeg import FFmpegNotFoundError
 from cucut.gui import GuiToolNotFoundError, launch
+from cucut.pipeline import run_pipeline
+from cucut.pipeline.stages import STAGE_COARSE, STAGE_FINE, STAGE_MEDIUM, ScanStage
 from cucut.scan import scan_directory
 from cucut.trim import trim_from_csv
 
@@ -26,23 +28,33 @@ def cmd_scan(args: argparse.Namespace) -> int:
     root = Path(args.input).expanduser().resolve()
     output = Path(args.output).expanduser().resolve()
 
+    hwaccel = args.hwaccel
+    scale_width = args.scale_width
+    sample_fps = args.sample_fps
+    if args.fast:
+        hwaccel = hwaccel or "auto"
+        scale_width = scale_width or 480
+        sample_fps = sample_fps or 3.0
+
     def on_file(video: Path, index: int, total: int, pct: float | None = None) -> None:
         if pct is None:
             print(f"[{index}/{total}] scanning {video.name}", flush=True)
         elif args.verbose:
             print(f"  {video.name}: {pct:.0f}%", flush=True)
 
-    rows = scan_directory(
+    rows, file_count = scan_directory(
         root,
         output,
         noise_db=args.noise,
         min_duration=args.min_duration,
+        hwaccel=hwaccel,
+        scale_width=scale_width,
+        sample_fps=sample_fps,
         recursive=not args.no_recursive,
         on_file=on_file,
     )
 
-    files = {row.path for row in rows}
-    print(f"Wrote {len(rows)} dead segment(s) from {len(files)} file(s) → {output}")
+    print(f"Wrote {len(rows)} dead segment(s) from {file_count} file(s) → {output}")
     if not rows:
         print("No freezes detected. Try lowering --noise (e.g. -55) or --min-duration.")
     return 0
@@ -97,6 +109,66 @@ def cmd_gui(args: argparse.Namespace) -> int:
     return launch(args.tool, video=video, csv=csv)
 
 
+_STAGE_BY_NAME = {
+    "coarse": STAGE_COARSE,
+    "medium": STAGE_MEDIUM,
+    "fine": STAGE_FINE,
+}
+
+
+def cmd_pipeline(args: argparse.Namespace) -> int:
+    root = Path(args.input).expanduser().resolve()
+    output_dir = Path(args.output).expanduser().resolve()
+
+    if args.stages:
+        stages: tuple[ScanStage, ...] = tuple(_STAGE_BY_NAME[name] for name in args.stages)
+    else:
+        stages = (STAGE_COARSE, STAGE_MEDIUM, STAGE_FINE)
+
+    def on_file(
+        stage: str,
+        video: Path,
+        index: int,
+        total: int,
+        pct: float | None = None,
+    ) -> None:
+        prefix = f"[{stage} {index}/{total}]"
+        if pct is None:
+            print(f"{prefix} {video.name}", flush=True)
+        elif args.verbose:
+            print(f"  {video.name}: {pct:.0f}%", flush=True)
+
+    result = run_pipeline(
+        root,
+        output_dir,
+        stages=stages,
+        prefer_gpu=not args.no_gpu,
+        recursive=not args.no_recursive,
+        on_file=on_file,
+    )
+
+    print(f"\nPipeline output → {output_dir}")
+    if result.coarse_csv:
+        print(f"  coarse:    {result.coarse_csv.name} ({len(result.coarse_rows)} hit(s))")
+    if result.medium_csv:
+        print(f"  medium:    {result.medium_csv.name} ({len(result.medium_rows)} hit(s))")
+    if result.fine_csv:
+        print(f"  fine:      {result.fine_csv.name} ({len(result.fine_rows)} hit(s))")
+    if result.segments_csv:
+        print(f"  review:    {result.segments_csv.name}")
+    if result.candidate_files:
+        print(f"  flagged:   {len(result.candidate_files)} file(s) after coarse pass")
+
+    if not result.coarse_rows:
+        print("\nNo long freezes in coarse pass. Folder looks clean (≥12 s threshold).")
+    elif not (result.segments_csv and result.coarse_rows):
+        pass
+    elif len(result.coarse_rows) and not (result.medium_rows or result.fine_rows):
+        print("\nCoarse hits did not survive medium/fine passes — check coarse.csv.")
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cucut",
@@ -125,8 +197,30 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--min-duration",
         type=float,
-        default=3.0,
-        help="Minimum freeze length in seconds (default: 3)",
+        default=5.0,
+        help="Minimum freeze length in seconds (default: 5)",
+    )
+    scan.add_argument(
+        "--fast",
+        action="store_true",
+        help="Fast scan: hwaccel auto + scale 480px + 3 fps (~5x faster, good for batch)",
+    )
+    scan.add_argument(
+        "--hwaccel",
+        default=None,
+        help="ffmpeg hwaccel mode (e.g. auto, vaapi). Used alone or with --fast",
+    )
+    scan.add_argument(
+        "--scale-width",
+        type=int,
+        default=None,
+        help="Downscale width before detect (e.g. 480). Used alone or with --fast",
+    )
+    scan.add_argument(
+        "--sample-fps",
+        type=float,
+        default=None,
+        help="Sample FPS before detect (e.g. 3). Used alone or with --fast",
     )
     scan.add_argument(
         "--no-recursive",
@@ -135,6 +229,37 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan.add_argument("-v", "--verbose", action="store_true")
     scan.set_defaults(func=cmd_scan)
+
+    pipeline = sub.add_parser(
+        "pipeline",
+        help="Multi-pass scan: coarse (fast) → medium → fine on candidates",
+    )
+    pipeline.add_argument("input", help="Video file or directory")
+    pipeline.add_argument(
+        "-o",
+        "--output",
+        default="pipeline-out",
+        help="Output directory for stage CSVs (default: pipeline-out/)",
+    )
+    pipeline.add_argument(
+        "--stages",
+        nargs="+",
+        choices=["coarse", "medium", "fine"],
+        metavar="STAGE",
+        help="Run subset of passes (default: all three)",
+    )
+    pipeline.add_argument(
+        "--no-gpu",
+        action="store_true",
+        help="Software decode only (no hwaccel)",
+    )
+    pipeline.add_argument(
+        "--no-recursive",
+        action="store_true",
+        help="Do not scan subdirectories",
+    )
+    pipeline.add_argument("-v", "--verbose", action="store_true")
+    pipeline.set_defaults(func=cmd_pipeline)
 
     trim = sub.add_parser("trim", help="Lossless trim from reviewed CSV")
     trim.add_argument("csv", help="Review CSV from scan")

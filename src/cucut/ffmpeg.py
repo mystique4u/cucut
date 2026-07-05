@@ -63,23 +63,45 @@ def detect_freezes(
     *,
     noise_db: float = -60.0,
     min_duration: float = 3.0,
+    hwaccel: str | None = None,
+    scale_width: int | None = None,
+    sample_fps: float | None = None,
+    ss: float | None = None,
+    to: float | None = None,
     on_progress: Callable[[float], None] | None = None,
 ) -> list[Interval]:
-    """Run ffmpeg freezedetect and return frozen intervals."""
+    """Run ffmpeg freezedetect and return frozen intervals (absolute file time)."""
     require_ffmpeg()
-    cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-i",
-        path,
-        "-map",
-        "0:v:0",
-        "-vf",
-        f"freezedetect=n={noise_db}dB:d={min_duration}",
-        "-f",
-        "null",
-        "-",
-    ]
+
+    filters: list[str] = []
+    if scale_width:
+        filters.append(f"scale={scale_width}:-2")
+    if sample_fps:
+        filters.append(f"fps={sample_fps}")
+    filters.append(f"freezedetect=n={noise_db}dB:d={min_duration}")
+
+    cmd = ["ffmpeg", "-hide_banner"]
+    if hwaccel:
+        cmd.extend(["-hwaccel", hwaccel])
+    if ss is not None:
+        cmd.extend(["-ss", f"{ss:.6f}"])
+    cmd.extend(["-i", path])
+    if to is not None:
+        cmd.extend(["-to", f"{to:.6f}"])
+    cmd.extend(
+        [
+            "-map",
+            "0:v:0",
+            "-vf",
+            ",".join(filters),
+            "-f",
+            "null",
+            "-",
+        ]
+    )
+
+    time_offset = ss or 0.0
+    clip_duration = (to - ss) if (ss is not None and to is not None) else None
 
     proc = subprocess.Popen(
         cmd,
@@ -103,7 +125,10 @@ def detect_freezes(
             match = TIME_LINE.search(line)
             if match:
                 current = parse_hms(f"{match.group(1)}:{match.group(2)}:{match.group(3)}")
-                on_progress(min(100.0, current / total * 100.0))
+                if clip_duration:
+                    on_progress(min(100.0, current / clip_duration * 100.0))
+                else:
+                    on_progress(min(100.0, current / total * 100.0))
 
         match = FREEZE_START.search(line)
         if match:
@@ -112,8 +137,8 @@ def detect_freezes(
 
         match = FREEZE_END.search(line)
         if match and freeze_start is not None:
-            freeze_end = float(match.group(1))
-            freezes.append(Interval(freeze_start, freeze_end))
+            freeze_end = float(match.group(1)) + time_offset
+            freezes.append(Interval(freeze_start + time_offset, freeze_end))
             freeze_start = None
 
     proc.wait()
