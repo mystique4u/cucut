@@ -1,0 +1,36 @@
+---
+description: Cucut architecture — scan/review/trim pipeline and module boundaries
+alwaysApply: false
+globs: src/cucut/**/*
+---
+
+# Cucut Architecture
+
+## Pipeline
+
+```text
+scan (freezedetect) → segments.csv → [review] → trim (-c copy concat)
+                              ↓
+                    export → LosslessCut CSV → gui
+```
+
+## Layer rules
+
+- **Core logic** (`segments.py`, `csvio.py`) — pure Python, no subprocess, fully unit-tested
+- **I/O edge** (`ffmpeg.py`) — all ffmpeg/ffprobe subprocess calls
+- **Orchestration** (`scan.py`, `trim.py`, `export.py`) — compose core + I/O
+- **CLI** (`cli.py`) — thin argparse wrapper, no business logic
+
+## Adding features
+
+| Feature | Where |
+|---------|-------|
+| New detect filter/param | `ffmpeg.py` + `scan.py` + CLI flags |
+| New CSV column | `csvio.py` + migration note in CHANGELOG |
+| Scene-change pad | new module `scene.py`, called from `scan.py` |
+| New export format | new `export_*.py` or extend `export.py` |
+
+## External tools
+
+- **LosslessCut** — visual review + lossless export (via `export` + `gui`)
+- **frame-checker** — optional batch scan GUI (`gui --tool frame-checker`)

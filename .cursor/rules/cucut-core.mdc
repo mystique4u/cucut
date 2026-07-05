@@ -1,0 +1,67 @@
+---
+description: Core cucut standards — modular Python, docs, git flow, pre-push, SemVer
+alwaysApply: true
+---
+
+# Cucut Core Standards
+
+Read [AGENTS.md](AGENTS.md) first.
+
+## Git flow
+
+- **Branch first** — before any feature/fix code, `git checkout -b feature/...` or `fix/...` from `main`
+- Never commit directly to `main`
+- One logical change per PR
+- Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`)
+
+## Before every push
+
+```bash
+bash scripts/pre-push-check.sh
+```
+
+Enable hooks:
+
+```bash
+git config core.hooksPath .githooks
+pre-commit install
+pre-commit install --hook-type commit-msg
+```
+
+## Documentation
+
+Update in the same PR as code:
+
+- `CHANGELOG.md` → `[Unreleased]` for behaviour changes
+- `README.md` / `CONTRIBUTING.md` when setup or workflow changes
+- `AGENTS.md` when agent workflow changes
+
+## Semantic versioning
+
+- Source of truth: `pyproject.toml` `version` + `src/cucut/__init__.py` `__version__`
+- Before push to `main` with app code: `bash scripts/bump-version.sh` + finalize CHANGELOG
+- Service paths (`.cursor/`, `.agents/`, `scripts/`, docs-only) skip version bump — see `scripts/service-paths.list`
+
+## Modular code
+
+| Module | Responsibility only |
+|--------|---------------------|
+| `scan.py` | freezedetect batch scan → CSV rows |
+| `csvio.py` | review CSV read/write |
+| `segments.py` | interval math (merge, invert) |
+| `ffmpeg.py` | ffprobe, freezedetect, concat trim |
+| `trim.py` | lossless trim orchestration |
+| `export.py` | LosslessCut CSV export |
+| `gui.py` | launch external GUIs |
+| `cli.py` | argparse commands only |
+
+Do not mix CLI parsing with ffmpeg calls or CSV logic.
+
+## DevOps
+
+- Local validation mirrors CI (`pre-commit`, `pytest`, `ruff`)
+- Never commit `.venv/`, `*.trimmed.mp4`, secrets
+
+## Token efficiency
+
+Use `caveman` / `cavecrew` skills when user asks for terse responses or long sessions.
