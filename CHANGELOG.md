@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `scan --mode dji` / `pipeline --mode dji`: mostly-static camera detect (-20dB, scale 160)
+  for DJI “camera died” scenes where only part of the frame still moves
+- `cucut review <csv>`: local web UI to accept/reject segments before `trim`
+  (optional: `pip install 'cucut[web]'`)
+  - **Filmstrip-first preview**: sparse seek JPEGs (~every 10s) for fast In/Out marking —
+    does not re-encode the whole timeline (HTML5 player swap cannot fix 10-bit HEVC)
+  - Optional continuous H.264 scrubbing proxy (GPU NVENC queue, one encode at a time;
+    320p / 2 fps) via **Build continuous proxy**
+  - Quick cut: mark In/Out (`I`/`O`) as a **delete** window; lossless save as
+    `*.cut.MP4` **next to the source** (same folder/disk), with on-screen progress
+    (cheap single-copy when deleting head/tail-to-EOF; concat only for true middle cuts;
+    Out within ~12 s of EOF, or last filmstrip thumb / **Out = end**, counts as delete-to-end)
+  - Review UI: **Open in VLC/mpv** for fine seek on the original HEVC
+  - Review UI: **Folder** sidebar tab — browse any directory and list MP4/MOV files
+
+### Fixed
+
+- Close open freezedetect segments at EOF (ffmpeg often omits `freeze_end`)
+- Pipeline/scan skip unreadable videos (e.g. incomplete MP4 without moov) instead of aborting
+- Checkpoint stage CSV after each file so a mid-run failure keeps partial results
+
 ## [0.1.4] - 2026-07-05
 
 ### Added

@@ -11,7 +11,17 @@ from cucut.export import export_losslesscut
 from cucut.ffmpeg import FFmpegNotFoundError
 from cucut.gui import GuiToolNotFoundError, launch
 from cucut.pipeline import run_pipeline
-from cucut.pipeline.stages import STAGE_COARSE, STAGE_FINE, STAGE_MEDIUM, ScanStage
+from cucut.pipeline.stages import (
+    DJI_PIPELINE,
+    STAGE_COARSE,
+    STAGE_COARSE_DJI,
+    STAGE_FINE,
+    STAGE_FINE_DJI,
+    STAGE_MEDIUM,
+    STAGE_MEDIUM_DJI,
+    ScanStage,
+)
+from cucut.presets import PRESETS
 from cucut.scan import scan_directory
 from cucut.trim import trim_from_csv
 
@@ -28,25 +38,30 @@ def cmd_scan(args: argparse.Namespace) -> int:
     root = Path(args.input).expanduser().resolve()
     output = Path(args.output).expanduser().resolve()
 
+    from cucut.presets import PRESETS
+
+    mode = "fast" if args.fast and args.mode == "default" else args.mode
+    preset = PRESETS[mode]
+
+    noise_db = preset.noise_db if args.noise is None else args.noise
+    min_duration = preset.min_duration if args.min_duration is None else args.min_duration
     hwaccel = args.hwaccel
-    scale_width = args.scale_width
-    sample_fps = args.sample_fps
-    if args.fast:
-        hwaccel = hwaccel or "auto"
-        scale_width = scale_width or 480
-        sample_fps = sample_fps or 3.0
+    if hwaccel is None and preset.prefer_hwaccel:
+        hwaccel = "auto"
+    scale_width = preset.scale_width if args.scale_width is None else args.scale_width
+    sample_fps = preset.sample_fps if args.sample_fps is None else args.sample_fps
 
     def on_file(video: Path, index: int, total: int, pct: float | None = None) -> None:
         if pct is None:
-            print(f"[{index}/{total}] scanning {video.name}", flush=True)
+            print(f"[{index}/{total}] scanning {video.name} [{mode}]", flush=True)
         elif args.verbose:
             print(f"  {video.name}: {pct:.0f}%", flush=True)
 
     rows, file_count = scan_directory(
         root,
         output,
-        noise_db=args.noise,
-        min_duration=args.min_duration,
+        noise_db=noise_db,
+        min_duration=min_duration,
         hwaccel=hwaccel,
         scale_width=scale_width,
         sample_fps=sample_fps,
@@ -56,7 +71,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
     print(f"Wrote {len(rows)} dead segment(s) from {file_count} file(s) → {output}")
     if not rows:
-        print("No freezes detected. Try lowering --noise (e.g. -55) or --min-duration.")
+        print(
+            "No freezes detected. Try --mode dji (mostly-static camera), "
+            "or --noise -20 / lower --min-duration."
+        )
     return 0
 
 
@@ -109,10 +127,28 @@ def cmd_gui(args: argparse.Namespace) -> int:
     return launch(args.tool, video=video, csv=csv)
 
 
+def cmd_review(args: argparse.Namespace) -> int:
+    csv_path = Path(args.csv).expanduser().resolve()
+    try:
+        from cucut.web import serve_review
+    except ImportError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        print("Install with: pip install 'cucut[web]'", file=sys.stderr)
+        return 2
+    serve_review(csv_path, host=args.host, port=args.port)
+    return 0
+
+
 _STAGE_BY_NAME = {
     "coarse": STAGE_COARSE,
     "medium": STAGE_MEDIUM,
     "fine": STAGE_FINE,
+}
+
+_STAGE_BY_NAME_DJI = {
+    "coarse": STAGE_COARSE_DJI,
+    "medium": STAGE_MEDIUM_DJI,
+    "fine": STAGE_FINE_DJI,
 }
 
 
@@ -120,8 +156,11 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
     root = Path(args.input).expanduser().resolve()
     output_dir = Path(args.output).expanduser().resolve()
 
+    stage_map = _STAGE_BY_NAME_DJI if args.mode == "dji" else _STAGE_BY_NAME
     if args.stages:
-        stages: tuple[ScanStage, ...] = tuple(_STAGE_BY_NAME[name] for name in args.stages)
+        stages: tuple[ScanStage, ...] = tuple(stage_map[name] for name in args.stages)
+    elif args.mode == "dji":
+        stages = DJI_PIPELINE
     else:
         stages = (STAGE_COARSE, STAGE_MEDIUM, STAGE_FINE)
 
@@ -138,6 +177,9 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
         elif args.verbose:
             print(f"  {video.name}: {pct:.0f}%", flush=True)
 
+    def on_skip(stage: str, video: Path, reason: str) -> None:
+        print(f"SKIP [{stage}] {video.name}: {reason}", flush=True)
+
     result = run_pipeline(
         root,
         output_dir,
@@ -145,6 +187,7 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
         prefer_gpu=not args.no_gpu,
         recursive=not args.no_recursive,
         on_file=on_file,
+        on_skip=on_skip,
     )
 
     print(f"\nPipeline output → {output_dir}")
@@ -158,13 +201,17 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
         print(f"  review:    {result.segments_csv.name}")
     if result.candidate_files:
         print(f"  flagged:   {len(result.candidate_files)} file(s) after coarse pass")
+    if result.skipped:
+        print(f"  skipped:   {len(result.skipped)} unreadable file(s) → skipped.txt")
 
-    if not result.coarse_rows:
-        print("\nNo long freezes in coarse pass. Folder looks clean (≥12 s threshold).")
-    elif not (result.segments_csv and result.coarse_rows):
-        pass
+    if not result.coarse_rows and "coarse" in {s.name for s in stages}:
+        threshold = 8 if args.mode == "dji" else 12
+        print(
+            f"\nNo long freezes in coarse pass. " f"Folder looks clean (≥{threshold} s threshold)."
+        )
     elif len(result.coarse_rows) and not (result.medium_rows or result.fine_rows):
-        print("\nCoarse hits did not survive medium/fine passes — check coarse.csv.")
+        if any(s.name in {"medium", "fine"} for s in stages):
+            print("\nCoarse hits did not survive medium/fine passes — check coarse.csv.")
 
     return 0
 
@@ -189,21 +236,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output CSV path (default: segments.csv)",
     )
     scan.add_argument(
+        "--mode",
+        choices=list(PRESETS),
+        default="default",
+        help="Detect preset: default (-60dB), fast (downscale), dji (mostly-static / -20dB)",
+    )
+    scan.add_argument(
         "--noise",
         type=float,
-        default=-60.0,
-        help="freezedetect noise in dB (default: -60, more sensitive than -70)",
+        default=None,
+        help="freezedetect noise in dB (default: from --mode, else -60)",
     )
     scan.add_argument(
         "--min-duration",
         type=float,
-        default=5.0,
-        help="Minimum freeze length in seconds (default: 5)",
+        default=None,
+        help="Minimum freeze length in seconds (default: from --mode, else 5)",
     )
     scan.add_argument(
         "--fast",
         action="store_true",
-        help="Fast scan: hwaccel auto + scale 480px + 3 fps (~5x faster, good for batch)",
+        help="Alias for --mode fast (hwaccel auto + scale 480px + 3 fps)",
     )
     scan.add_argument(
         "--hwaccel",
@@ -242,6 +295,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output directory for stage CSVs (default: pipeline-out/)",
     )
     pipeline.add_argument(
+        "--mode",
+        choices=["default", "dji"],
+        default="default",
+        help="Stage presets: default (strict) or dji (mostly-static / -20dB)",
+    )
+    pipeline.add_argument(
         "--stages",
         nargs="+",
         choices=["coarse", "medium", "fine"],
@@ -270,6 +329,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     trim.add_argument("--dry-run", action="store_true", help="Show plan without ffmpeg")
     trim.set_defaults(func=cmd_trim)
+
+    review = sub.add_parser(
+        "review",
+        help="Local web UI to accept/reject CSV segments before trim",
+    )
+    review.add_argument("csv", help="Review CSV from scan/pipeline")
+    review.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    review.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765)")
+    review.set_defaults(func=cmd_review)
 
     export = sub.add_parser("export", help="Export LosslessCut CSV per file")
     export.add_argument("csv", help="Review CSV")

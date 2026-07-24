@@ -44,3 +44,31 @@ STAGE_FINE = ScanStage(
 )
 
 DEFAULT_PIPELINE = (STAGE_COARSE, STAGE_MEDIUM, STAGE_FINE)
+
+# DJI mostly-static camera (loose noise + heavy downscale).
+STAGE_COARSE_DJI = ScanStage(
+    name="coarse",
+    min_duration=8.0,
+    noise_db=-20.0,
+    scale_width=160,
+    sample_fps=2.0,
+)
+
+STAGE_MEDIUM_DJI = ScanStage(
+    name="medium",
+    min_duration=5.0,
+    noise_db=-20.0,
+    scale_width=320,
+    sample_fps=3.0,
+)
+
+STAGE_FINE_DJI = ScanStage(
+    name="fine",
+    min_duration=5.0,
+    noise_db=-25.0,
+    scale_width=480,
+    sample_fps=5.0,
+    region_pad_sec=8.0,
+)
+
+DJI_PIPELINE = (STAGE_COARSE_DJI, STAGE_MEDIUM_DJI, STAGE_FINE_DJI)

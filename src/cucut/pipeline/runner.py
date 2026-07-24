@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from cucut.csvio import SegmentRow, write_segments
-from cucut.ffmpeg import detect_freezes, probe_duration
+from cucut.ffmpeg import VideoUnreadableError, detect_freezes, probe_duration
 from cucut.pipeline.hwaccel import resolve_hwaccel
 from cucut.pipeline.regions import windows_from_rows
 from cucut.pipeline.stages import DEFAULT_PIPELINE, ScanStage
@@ -21,6 +21,7 @@ class PipelineResult:
     medium_rows: list[SegmentRow] = field(default_factory=list)
     fine_rows: list[SegmentRow] = field(default_factory=list)
     candidate_files: list[Path] = field(default_factory=list)
+    skipped: list[tuple[Path, str]] = field(default_factory=list)
     coarse_csv: Path | None = None
     medium_csv: Path | None = None
     fine_csv: Path | None = None
@@ -66,6 +67,7 @@ def _scan_file_stage(
             sample_fps=stage.sample_fps,
             ss=None if full_file else window.start,
             to=None if full_file else window.end,
+            file_end=file_duration if full_file else window.end,
             on_progress=on_progress,
         )
         for freeze in freezes:
@@ -88,8 +90,11 @@ def _scan_videos(
     hwaccel: str | None,
     prior_rows: list[SegmentRow] | None,
     on_file: Callable[..., None] | None,
-) -> list[SegmentRow]:
+    on_skip: Callable[[str, Path, str], None] | None,
+    checkpoint: Path | None,
+) -> tuple[list[SegmentRow], list[tuple[Path, str]]]:
     all_rows: list[SegmentRow] = []
+    skipped: list[tuple[Path, str]] = []
     total = len(videos)
 
     for index, video in enumerate(videos, start=1):
@@ -106,16 +111,26 @@ def _scan_videos(
                 return None
             return lambda pct: on_file(stage_name, v, i, n, pct)
 
-        rows = _scan_file_stage(
-            video,
-            stage,
-            hwaccel=hwaccel,
-            prior_rows=prior_rows,
-            on_progress=make_progress(),
-        )
-        all_rows.extend(rows)
+        try:
+            rows = _scan_file_stage(
+                video,
+                stage,
+                hwaccel=hwaccel,
+                prior_rows=prior_rows,
+                on_progress=make_progress(),
+            )
+        except VideoUnreadableError as exc:
+            reason = str(exc)
+            skipped.append((video, reason))
+            if on_skip:
+                on_skip(stage.name, video, reason)
+            continue
 
-    return all_rows
+        all_rows.extend(rows)
+        if checkpoint is not None:
+            write_segments(checkpoint, all_rows)
+
+    return all_rows, skipped
 
 
 def run_pipeline(
@@ -126,6 +141,7 @@ def run_pipeline(
     prefer_gpu: bool = True,
     recursive: bool = True,
     on_file: Callable[..., None] | None = None,
+    on_skip: Callable[[str, Path, str], None] | None = None,
 ) -> PipelineResult:
     """Run coarse → medium → fine pipeline. Each pass narrows candidates."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -150,15 +166,17 @@ def run_pipeline(
             if not targets:
                 break
 
-        rows = _scan_videos(
+        out_path = output_dir / f"{stage.name}.csv"
+        rows, skipped = _scan_videos(
             targets,
             stage,
             hwaccel=hwaccel,
             prior_rows=prior_rows,
             on_file=on_file,
+            on_skip=on_skip,
+            checkpoint=out_path,
         )
-
-        out_path = output_dir / f"{stage.name}.csv"
+        result.skipped.extend(skipped)
         write_segments(out_path, rows)
 
         if stage.name == "coarse":
@@ -183,6 +201,13 @@ def run_pipeline(
             encoding="utf-8",
         )
         result.candidate_files = _unique_paths(result.coarse_rows)
+
+    if result.skipped:
+        skipped_path = output_dir / "skipped.txt"
+        skipped_path.write_text(
+            "\n".join(f"{path}\t{reason}" for path, reason in result.skipped) + "\n",
+            encoding="utf-8",
+        )
 
     result.segments_csv = segments_path
     return result

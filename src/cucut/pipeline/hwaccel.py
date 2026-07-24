@@ -36,15 +36,11 @@ def has_nvidia_gpu() -> bool:
 
 
 def resolve_hwaccel(*, prefer_gpu: bool = True) -> str | None:
-    """Pick best hwaccel. ``auto`` on NVIDIA (NVDEC); else VAAPI; else None."""
+    """Pick best hwaccel. Prefer ``auto`` (NVDEC); else cuda/vaapi."""
     available = list_hwaccels()
     if not prefer_gpu:
         return None
-    # auto reliably uses NVDEC on RTX; plain cuda can hang on filter chains.
-    if "auto" in available:
+    # ``auto`` is valid even when omitted from ``ffmpeg -hwaccels``.
+    if "auto" in available or "cuda" in available or "vaapi" in available:
         return "auto"
-    if "cuda" in available and has_nvidia_gpu():
-        return "cuda"
-    if "vaapi" in available:
-        return "vaapi"
     return None

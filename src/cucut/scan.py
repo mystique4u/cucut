@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from cucut.csvio import SegmentRow, write_segments
-from cucut.ffmpeg import detect_freezes, probe_duration
+from cucut.ffmpeg import VideoUnreadableError, detect_freezes, probe_duration
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".m4v", ".avi", ".webm"}
 
@@ -41,6 +41,7 @@ def scan_path(
         hwaccel=hwaccel,
         scale_width=scale_width,
         sample_fps=sample_fps,
+        file_end=file_duration,
         on_progress=on_progress,
     )
 
@@ -86,16 +87,22 @@ def scan_directory(
                 return None
             return lambda pct: on_file(v, i, n, pct)
 
-        rows = scan_path(
-            video,
-            noise_db=noise_db,
-            min_duration=min_duration,
-            hwaccel=hwaccel,
-            scale_width=scale_width,
-            sample_fps=sample_fps,
-            on_progress=make_progress(),
-        )
+        try:
+            rows = scan_path(
+                video,
+                noise_db=noise_db,
+                min_duration=min_duration,
+                hwaccel=hwaccel,
+                scale_width=scale_width,
+                sample_fps=sample_fps,
+                on_progress=make_progress(),
+            )
+        except VideoUnreadableError as exc:
+            print(f"SKIP {video.name}: {exc}", flush=True)
+            continue
+
         all_rows.extend(rows)
+        write_segments(output, all_rows)
 
     write_segments(output, all_rows)
     return all_rows, len(videos)

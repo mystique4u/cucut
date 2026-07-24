@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>cucut review</title>
+  <link rel="stylesheet" href="/static/review.css?v=8" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <header class="brand">
+        <div class="brand-name">cucut</div>
+        <div class="brand-sub">review before trim</div>
+      </header>
+      <p class="csv-path" title="{{ csv_path }}">{{ csv_path }}</p>
+      <div class="sidebar-tabs" role="tablist">
+        <button type="button" class="tab active" id="tab-segments" data-mode="segments">Segments</button>
+        <button type="button" class="tab" id="tab-folder" data-mode="folder">Folder</button>
+      </div>
+      <div id="folder-bar" class="folder-bar hidden">
+        <div class="folder-nav">
+          <button type="button" id="btn-folder-up" class="btn ghost small" title="Parent folder">↑</button>
+          <input type="text" id="folder-path" class="folder-path" spellcheck="false" />
+          <button type="button" id="btn-folder-go" class="btn small">Go</button>
+        </div>
+      </div>
+      <ul id="video-list" class="video-list">
+        {% for v in videos %}
+        <li>
+          <button type="button" class="video-item" data-path="{{ v.path }}">
+            <span class="video-name">{{ v.name }}</span>
+            <span class="video-meta">
+              {{ v.count }} seg · {{ v.remove }} cut · {{ v.keep }} keep
+              {% if v.pending %} · {{ v.pending }} open{% endif %}
+            </span>
+          </button>
+        </li>
+        {% else %}
+        <li class="empty">No segments in CSV</li>
+        {% endfor %}
+      </ul>
+      <footer class="sidebar-foot">
+        <button type="button" id="btn-reload" class="btn ghost">Reload CSV</button>
+      </footer>
+    </aside>
+
+    <main class="main">
+      <div id="empty-main" class="empty-main">
+        <p>Select a clip on the left.</p>
+        <p class="hint">Accept → cut on trim · Reject → keep in file</p>
+        <p class="hint">I / O mark range to delete · filmstrip seeks fast · Save cut = lossless remove</p>
+      </div>
+
+      <div id="workspace" class="workspace hidden">
+        <div class="player-wrap">
+          <div id="preview-loader" class="preview-loader hidden" aria-live="polite">
+            <div class="loader-card">
+              <div class="loader-spin" aria-hidden="true"></div>
+              <div class="loader-title" id="loader-title">Building filmstrip</div>
+              <div class="loader-sub" id="loader-sub">Sparse seek thumbs · ~seconds, not minutes · use Open in VLC for fine scrub</div>
+              <div class="loader-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div id="loader-fill" class="loader-fill"></div>
+              </div>
+              <div id="loader-pct" class="loader-pct">0%</div>
+            </div>
+          </div>
+          <div id="preview-banner" class="preview-banner hidden" role="status"></div>
+          <div id="still-wrap" class="still-wrap">
+            <img id="still" class="still" alt="" />
+            <div id="still-time" class="still-time">—</div>
+          </div>
+          <video id="player" class="hidden" controls playsinline preload="none"></video>
+          <div id="filmstrip" class="filmstrip" aria-label="Seek filmstrip"></div>
+          <div id="timeline" class="timeline" aria-hidden="true"></div>
+        </div>
+
+        <div class="work-head">
+          <h1 id="current-name" class="current-name"></h1>
+          <div class="work-actions">
+            <button type="button" id="btn-accept-all" class="btn">Accept all</button>
+            <button type="button" id="btn-reject-all" class="btn ghost">Reject all</button>
+          </div>
+        </div>
+
+        <div class="quickcut" id="quickcut">
+          <div class="quickcut-times">
+            <span>In <strong id="mark-in-label">—</strong></span>
+            <span>Out <strong id="mark-out-label">—</strong></span>
+            <span class="quickcut-hint">click start · Shift+click end · <kbd>I</kbd>/<kbd>O</kbd>/<kbd>E</kbd></span>
+          </div>
+          <div class="quickcut-actions">
+            <button type="button" id="btn-mark-in" class="btn ghost small">Mark In</button>
+            <button type="button" id="btn-mark-out" class="btn ghost small">Mark Out</button>
+            <button type="button" id="btn-mark-end" class="btn ghost small" title="Set Out to end of file">Out = end</button>
+            <button type="button" id="btn-save-cut" class="btn small reject" disabled>Delete range</button>
+            <button type="button" id="btn-build-proxy" class="btn ghost small">Build continuous proxy</button>
+            <button type="button" id="btn-open-mpv" class="btn ghost small">Open in VLC</button>
+          </div>
+        </div>
+        <p id="toast" class="toast hidden" role="status"></p>
+
+        <ul id="seg-list" class="seg-list"></ul>
+      </div>
+    </main>
+  </div>
+  <script src="/static/review.js"></script>
+</body>
+</html>
