@@ -128,14 +128,15 @@ def cmd_gui(args: argparse.Namespace) -> int:
 
 
 def cmd_review(args: argparse.Namespace) -> int:
-    csv_path = Path(args.csv).expanduser().resolve()
+    csv_path = Path(args.csv).expanduser().resolve() if args.csv else None
+    workspace = Path(args.workspace).expanduser().resolve() if args.workspace else None
     try:
         from cucut.web import serve_review
     except ImportError as exc:
         print(f"error: {exc}", file=sys.stderr)
         print("Install with: pip install 'cucut[web]'", file=sys.stderr)
         return 2
-    serve_review(csv_path, host=args.host, port=args.port)
+    serve_review(csv_path, workspace=workspace, host=args.host, port=args.port)
     return 0
 
 
@@ -332,9 +333,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     review = sub.add_parser(
         "review",
-        help="Local web UI to accept/reject CSV segments before trim",
+        help="Local web UI to scan folders and accept/reject segments before trim",
     )
-    review.add_argument("csv", help="Review CSV from scan/pipeline")
+    review.add_argument(
+        "csv",
+        nargs="?",
+        default=None,
+        help="Review CSV (optional; default: <workspace>/segments.csv)",
+    )
+    review.add_argument(
+        "--workspace",
+        default=None,
+        help=(
+            "Workspace folder for CSV, tmp, and proxies "
+            "(default: CUCUT_WORKSPACE or /mnt/FAST/cucut-workspace)"
+        ),
+    )
     review.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     review.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765)")
     review.set_defaults(func=cmd_review)

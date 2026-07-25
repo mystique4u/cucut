@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>cucut review</title>
-  <link rel="stylesheet" href="/static/review.css?v=8" />
+  <link rel="stylesheet" href="/static/review.css?v=scanstop1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -16,18 +16,35 @@
         <div class="brand-name">cucut</div>
         <div class="brand-sub">review before trim</div>
       </header>
-      <p class="csv-path" title="{{ csv_path }}">{{ csv_path }}</p>
+
+      <div class="workspace-bar">
+        <button type="button" id="btn-workspace-open" class="btn workspace-open">Open workspace</button>
+        <p class="workspace-name" id="workspace-name" title="{{ workspace }}">{{ workspace }}</p>
+        <p class="csv-path" id="csv-path" title="{{ csv_path }}">CSV: {{ csv_path }}</p>
+      </div>
+
       <div class="sidebar-tabs" role="tablist">
         <button type="button" class="tab active" id="tab-segments" data-mode="segments">Segments</button>
         <button type="button" class="tab" id="tab-folder" data-mode="folder">Folder</button>
       </div>
-      <div id="folder-bar" class="folder-bar hidden">
-        <div class="folder-nav">
-          <button type="button" id="btn-folder-up" class="btn ghost small" title="Parent folder">↑</button>
-          <input type="text" id="folder-path" class="folder-path" spellcheck="false" />
-          <button type="button" id="btn-folder-go" class="btn small">Go</button>
+
+      <div id="segments-tools" class="segments-tools">
+        <div class="scan-row">
+          <select id="scan-mode" class="scan-mode" title="Detect mode">
+            <option value="dji" selected>dji</option>
+            <option value="fast">fast</option>
+            <option value="default">default</option>
+          </select>
+          <label class="scan-check compact" title="Include subfolders">
+            <input type="checkbox" id="scan-recursive" checked />
+            sub
+          </label>
+          <button type="button" id="btn-scan-start" class="btn small">Scan</button>
+          <button type="button" id="btn-scan-stop" class="btn ghost small" title="Stop running scan">Stop</button>
         </div>
+        <p id="scan-hint" class="scan-hint">Manual only — Scan when you want; never auto-starts</p>
       </div>
+
       <ul id="video-list" class="video-list">
         {% for v in videos %}
         <li>
@@ -40,17 +57,27 @@
           </button>
         </li>
         {% else %}
-        <li class="empty">No segments in CSV</li>
+        <li class="empty">No segments yet — press Scan</li>
         {% endfor %}
       </ul>
-      <footer class="sidebar-foot">
-        <button type="button" id="btn-reload" class="btn ghost">Reload CSV</button>
-      </footer>
+
+      <div id="jobs-panel" class="jobs-panel" aria-live="polite">
+        <div class="jobs-head">
+          <span class="jobs-title">Jobs</span>
+          <div class="jobs-head-actions">
+            <button type="button" id="btn-jobs-clear" class="btn ghost small" title="Clear finished jobs">Clear</button>
+            <span id="jobs-count" class="jobs-count">idle</span>
+          </div>
+        </div>
+        <ul id="jobs-list" class="jobs-list">
+          <li class="jobs-empty">No background jobs</li>
+        </ul>
+      </div>
     </aside>
 
     <main class="main">
       <div id="empty-main" class="empty-main">
-        <p>Select a clip on the left.</p>
+        <p>Open a workspace folder, then Scan for freezes.</p>
         <p class="hint">Accept → cut on trim · Reject → keep in file</p>
         <p class="hint">I / O mark range to delete · filmstrip seeks fast · Save cut = lossless remove</p>
       </div>
@@ -90,7 +117,6 @@
           <div class="quickcut-times">
             <span>In <strong id="mark-in-label">—</strong></span>
             <span>Out <strong id="mark-out-label">—</strong></span>
-            <span class="quickcut-hint">click start · Shift+click end · <kbd>I</kbd>/<kbd>O</kbd>/<kbd>E</kbd></span>
           </div>
           <div class="quickcut-actions">
             <button type="button" id="btn-mark-in" class="btn ghost small">Mark In</button>
@@ -107,6 +133,27 @@
       </div>
     </main>
   </div>
-  <script src="/static/review.js"></script>
+
+  <div id="folder-picker" class="picker hidden" role="dialog" aria-modal="true" aria-labelledby="picker-title">
+    <div class="picker-card">
+      <header class="picker-head">
+        <h2 id="picker-title" class="picker-title">Open workspace</h2>
+        <button type="button" id="picker-close" class="btn ghost small" aria-label="Close">✕</button>
+      </header>
+      <div id="picker-roots" class="picker-roots"></div>
+      <div class="picker-nav">
+        <button type="button" id="picker-up" class="btn ghost small" title="Parent folder">↑</button>
+        <input type="text" id="picker-path" class="folder-path" spellcheck="false" />
+        <button type="button" id="picker-go" class="btn small">Go</button>
+      </div>
+      <ul id="picker-list" class="picker-list"></ul>
+      <footer class="picker-foot">
+        <button type="button" id="picker-cancel" class="btn ghost">Cancel</button>
+        <button type="button" id="picker-select" class="btn">Open workspace</button>
+      </footer>
+    </div>
+  </div>
+
+  <script src="/static/review.js?v=scanstop1"></script>
 </body>
 </html>

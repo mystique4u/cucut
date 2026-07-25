@@ -6,9 +6,16 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from cucut.csvio import SegmentRow, write_segments
-from cucut.ffmpeg import VideoUnreadableError, detect_freezes, probe_duration
+from cucut.ffmpeg import (
+    ScanCancelled,
+    VideoUnreadableError,
+    detect_freezes,
+    probe_duration,
+)
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".m4v", ".avi", ".webm"}
+# Skip review-app / VCS dirs when scanning a workspace recursively.
+_SKIP_DIR_NAMES = frozenset({".cucut", "tmp", "proxies", ".git", ".venv", "node_modules"})
 
 
 def iter_videos(root: Path, *, recursive: bool) -> Iterable[Path]:
@@ -17,7 +24,14 @@ def iter_videos(root: Path, *, recursive: bool) -> Iterable[Path]:
         return
 
     pattern = "**/*" if recursive else "*"
+    root = root.resolve()
     for path in sorted(root.glob(pattern)):
+        try:
+            rel_parts = path.resolve().relative_to(root).parts
+        except (OSError, ValueError):
+            continue
+        if any(part in _SKIP_DIR_NAMES for part in rel_parts[:-1]):
+            continue
         if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS:
             yield path
 
@@ -31,7 +45,11 @@ def scan_path(
     scale_width: int | None = None,
     sample_fps: float | None = None,
     on_progress: Callable[[float], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+    on_proc: Callable[..., None] | None = None,
 ) -> list[SegmentRow]:
+    if should_cancel and should_cancel():
+        raise ScanCancelled("scan cancelled")
     file_duration = probe_duration(str(path))
 
     freezes = detect_freezes(
@@ -43,6 +61,8 @@ def scan_path(
         sample_fps=sample_fps,
         file_end=file_duration,
         on_progress=on_progress,
+        should_cancel=should_cancel,
+        on_proc=on_proc,
     )
 
     return [
@@ -68,11 +88,15 @@ def scan_directory(
     sample_fps: float | None = None,
     recursive: bool = True,
     on_file: Callable[..., None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+    on_proc: Callable[..., None] | None = None,
 ) -> tuple[list[SegmentRow], int]:
     videos = list(iter_videos(root, recursive=recursive))
     all_rows: list[SegmentRow] = []
 
     for index, video in enumerate(videos, start=1):
+        if should_cancel and should_cancel():
+            raise ScanCancelled("scan cancelled")
         if on_file:
             on_file(video, index, len(videos))
 
@@ -96,6 +120,8 @@ def scan_directory(
                 scale_width=scale_width,
                 sample_fps=sample_fps,
                 on_progress=make_progress(),
+                should_cancel=should_cancel,
+                on_proc=on_proc,
             )
         except VideoUnreadableError as exc:
             print(f"SKIP {video.name}: {exc}", flush=True)

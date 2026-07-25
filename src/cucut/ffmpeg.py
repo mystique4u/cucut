@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable
+from pathlib import Path
 
 from cucut.segments import Interval
 
@@ -21,6 +25,10 @@ class FFmpegNotFoundError(RuntimeError):
 
 class VideoUnreadableError(RuntimeError):
     """Video exists but ffprobe/ffmpeg cannot read it (corrupt, incomplete, etc.)."""
+
+
+class ScanCancelled(RuntimeError):
+    """Scan/job cancelled by the user."""
 
 
 def require_ffmpeg() -> str:
@@ -69,6 +77,90 @@ def probe_duration(path: str) -> float:
         raise VideoUnreadableError(f"{path}: invalid duration {result.stdout!r}") from exc
 
 
+def probe_video_info(path: str) -> dict[str, object]:
+    """Return width/height/codec/duration/fps and a short display label (e.g. 4K)."""
+    require_ffprobe()
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,codec_name,avg_frame_rate:format=duration",
+            "-of",
+            "json",
+            path,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "ffprobe failed").strip().splitlines()
+        message = detail[-1] if detail else "ffprobe failed"
+        raise VideoUnreadableError(f"{path}: {message}")
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise VideoUnreadableError(f"{path}: invalid ffprobe JSON") from exc
+
+    streams = payload.get("streams") or []
+    stream = streams[0] if streams else {}
+    fmt = payload.get("format") or {}
+    width = int(stream.get("width") or 0)
+    height = int(stream.get("height") or 0)
+    codec = str(stream.get("codec_name") or "?").lower()
+    duration = 0.0
+    try:
+        duration = float(fmt.get("duration") or 0.0)
+    except (TypeError, ValueError):
+        duration = 0.0
+
+    fps = 0.0
+    rate = str(stream.get("avg_frame_rate") or "0/0")
+    if "/" in rate:
+        num_s, den_s = rate.split("/", 1)
+        try:
+            num, den = float(num_s), float(den_s)
+            if den:
+                fps = num / den
+        except ValueError:
+            fps = 0.0
+
+    if width >= 3840 or height >= 2160:
+        res_label = "4K"
+    elif width >= 2560 or height >= 1440:
+        res_label = "2.7K"
+    elif width >= 1920 or height >= 1080:
+        res_label = "1080p"
+    elif width >= 1280 or height >= 720:
+        res_label = "720p"
+    elif width and height:
+        res_label = f"{width}x{height}"
+    else:
+        res_label = "?"
+
+    codec_label = {
+        "hevc": "HEVC",
+        "h264": "H.264",
+        "av1": "AV1",
+        "prores": "ProRes",
+    }.get(codec, codec.upper() if codec != "?" else "?")
+
+    label = f"{res_label} {width}x{height} {codec_label}".strip()
+    return {
+        "width": width,
+        "height": height,
+        "codec": codec,
+        "duration": duration,
+        "fps": round(fps, 3) if fps else 0.0,
+        "res_label": res_label,
+        "label": label,
+    }
+
+
 def close_open_freeze(
     freezes: list[Interval],
     freeze_start: float | None,
@@ -115,6 +207,8 @@ def detect_freezes(
     to: float | None = None,
     file_end: float | None = None,
     on_progress: Callable[[float], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+    on_proc: Callable[[subprocess.Popen[str] | None], None] | None = None,
 ) -> list[Interval]:
     """Run ffmpeg freezedetect and return frozen intervals (absolute file time)."""
     require_ffmpeg()
@@ -156,39 +250,52 @@ def detect_freezes(
         text=True,
     )
     assert proc.stderr is not None
+    if on_proc:
+        on_proc(proc)
 
     freezes: list[Interval] = []
     freeze_start: float | None = None
     total: float | None = None
     last_time: float | None = None
+    cancelled = False
 
-    for line in proc.stderr:
-        if total is None:
-            match = DURATION_LINE.search(line)
+    try:
+        for line in proc.stderr:
+            if should_cancel and should_cancel():
+                cancelled = True
+                proc.kill()
+                break
+            if total is None:
+                match = DURATION_LINE.search(line)
+                if match:
+                    total = parse_hms(f"{match.group(1)}:{match.group(2)}:{match.group(3)}")
+
+            match = TIME_LINE.search(line)
             if match:
-                total = parse_hms(f"{match.group(1)}:{match.group(2)}:{match.group(3)}")
+                last_time = parse_hms(f"{match.group(1)}:{match.group(2)}:{match.group(3)}")
+                if on_progress and total:
+                    if clip_duration:
+                        on_progress(min(100.0, last_time / clip_duration * 100.0))
+                    else:
+                        on_progress(min(100.0, last_time / total * 100.0))
 
-        match = TIME_LINE.search(line)
-        if match:
-            last_time = parse_hms(f"{match.group(1)}:{match.group(2)}:{match.group(3)}")
-            if on_progress and total:
-                if clip_duration:
-                    on_progress(min(100.0, last_time / clip_duration * 100.0))
-                else:
-                    on_progress(min(100.0, last_time / total * 100.0))
+            match = FREEZE_START.search(line)
+            if match:
+                freeze_start = float(match.group(1))
+                continue
 
-        match = FREEZE_START.search(line)
-        if match:
-            freeze_start = float(match.group(1))
-            continue
-
-        match = FREEZE_END.search(line)
-        if match and freeze_start is not None:
-            freeze_end = float(match.group(1)) + time_offset
-            freezes.append(Interval(freeze_start + time_offset, freeze_end))
-            freeze_start = None
+            match = FREEZE_END.search(line)
+            if match and freeze_start is not None:
+                freeze_end = float(match.group(1)) + time_offset
+                freezes.append(Interval(freeze_start + time_offset, freeze_end))
+                freeze_start = None
+    finally:
+        if on_proc:
+            on_proc(None)
 
     proc.wait()
+    if cancelled or (should_cancel and should_cancel()):
+        raise ScanCancelled(f"scan cancelled during {path}")
     if proc.returncode != 0:
         raise RuntimeError(f"ffmpeg freezedetect failed for {path} (exit {proc.returncode})")
 
@@ -213,9 +320,6 @@ def concat_keep_regions(
     require_ffmpeg()
     if not keep:
         raise ValueError("no keep intervals")
-
-    import os
-    import tempfile
 
     abs_input = os.path.abspath(input_path)
     with tempfile.NamedTemporaryFile(
@@ -270,13 +374,28 @@ def concat_keep_regions(
         os.unlink(concat_path)
 
 
-def cucut_tmp_dir() -> str:
-    """Scratch dir for cuts/proxies. Prefer FAST/info — never fill root ``/``."""
-    import os
-    from pathlib import Path
+def _workspace_store() -> Path | None:
+    """Active review workspace artifact dir (`<workspace>/.cucut`), if set."""
+    root = os.environ.get("CUCUT_WORKSPACE")
+    if not root:
+        return None
+    store = Path(root) / ".cucut"
+    try:
+        store.mkdir(parents=True, exist_ok=True)
+        if os.access(store, os.W_OK):
+            return store
+    except OSError:
+        return None
+    return None
 
-    override = os.environ.get("CUCUT_TMPDIR") or os.environ.get("CUCUT_TMP")
+
+def cucut_tmp_dir() -> str:
+    """Scratch dir for cuts. Prefer workspace ``.cucut/tmp``, never fill root ``/``."""
     candidates: list[Path] = []
+    store = _workspace_store()
+    if store is not None:
+        candidates.append(store / "tmp")
+    override = os.environ.get("CUCUT_TMPDIR") or os.environ.get("CUCUT_TMP")
     if override:
         candidates.append(Path(override))
     candidates.extend(
@@ -289,38 +408,38 @@ def cucut_tmp_dir() -> str:
         try:
             path.mkdir(parents=True, exist_ok=True)
             if os.access(path, os.W_OK):
-                return str(path)
+                return str(path.resolve())
         except OSError:
             continue
-    # Last resort: beside cwd (still better than filling /tmp on a full root disk)
     fallback = Path.cwd() / ".cucut-tmp"
     fallback.mkdir(parents=True, exist_ok=True)
     return str(fallback)
 
 
 def proxy_cache_dir() -> str:
-    """Directory for scrubbing proxies. Prefer FAST mount; else info; else CUCUT_TMP."""
-    import os
-    from pathlib import Path
-
+    """Filmstrip + proxy cache. Prefer workspace ``.cucut/proxies``."""
+    candidates: list[Path] = []
+    store = _workspace_store()
+    if store is not None:
+        candidates.append(store / "proxies")
     override = os.environ.get("CUCUT_PROXY_DIR")
     if override:
-        Path(override).mkdir(parents=True, exist_ok=True)
-        return override
-
-    for path in (
-        Path("/mnt/FAST/cucut-proxies"),
-        Path("/run/media/optimus/info/cucut/proxies"),
-        Path(cucut_tmp_dir()) / "proxies",
-    ):
+        candidates.append(Path(override))
+    candidates.extend(
+        [
+            Path("/mnt/FAST/cucut-proxies"),
+            Path("/run/media/optimus/info/cucut/proxies"),
+            Path(cucut_tmp_dir()) / "proxies",
+        ]
+    )
+    for path in candidates:
         try:
-            if path.parent.is_dir() or path == Path(cucut_tmp_dir()) / "proxies":
-                path.mkdir(parents=True, exist_ok=True)
-                if os.access(path, os.W_OK):
-                    return str(path)
+            path.mkdir(parents=True, exist_ok=True)
+            if os.access(path, os.W_OK):
+                return str(path.resolve())
         except OSError:
             continue
-    raise RuntimeError("No writable proxy cache (set CUCUT_PROXY_DIR or free space on FAST/info)")
+    raise RuntimeError("No writable proxy cache (open a workspace or set CUCUT_PROXY_DIR)")
 
 
 # Bump when proxy encode settings change (invalidates old cache names).
@@ -344,8 +463,6 @@ def proxy_path_for(source: str, *, cache_dir: str | None = None) -> str:
 def filmstrip_dir_for(source: str, *, cache_dir: str | None = None) -> str:
     """Directory for seek-extracted JPEG scrub thumbs."""
     import hashlib
-    import os
-    from pathlib import Path
 
     src = Path(source).expanduser().resolve()
     st = src.stat()
@@ -353,6 +470,85 @@ def filmstrip_dir_for(source: str, *, cache_dir: str | None = None) -> str:
     digest = hashlib.sha1(key.encode()).hexdigest()[:16]
     base = cache_dir or proxy_cache_dir()
     return os.path.join(base, "strips", f"{digest}_{src.stem}")
+
+
+def folder_thumb_path_for(source: str, *, cache_dir: str | None = None) -> str:
+    """Stable path for a single cheap folder-list JPEG thumb."""
+    import hashlib
+
+    src = Path(source).expanduser().resolve()
+    st = src.stat()
+    key = f"thumb|{src}|{st.st_size}|{int(st.st_mtime)}|{_PROXY_VERSION}"
+    digest = hashlib.sha1(key.encode()).hexdigest()[:16]
+    base = cache_dir or proxy_cache_dir()
+    return str(Path(base) / "thumbs" / f"{digest}_{src.stem}.jpg")
+
+
+def ensure_folder_thumb(
+    source: str,
+    *,
+    scale_width: int = 160,
+    seek: float = 1.0,
+    cache_dir: str | None = None,
+) -> str:
+    """Return a tiny seek JPEG for folder lists (cached under ``.cucut/proxies/thumbs``)."""
+    require_ffmpeg()
+    dest = folder_thumb_path_for(source, cache_dir=cache_dir)
+    if Path(dest).is_file() and Path(dest).stat().st_size > 0:
+        return dest
+    Path(dest).parent.mkdir(parents=True, exist_ok=True)
+    t = max(0.0, float(seek))
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-ss",
+        f"{t:.3f}",
+        "-hwaccel",
+        "cuda",
+        "-i",
+        source,
+        "-frames:v",
+        "1",
+        "-vf",
+        f"scale={scale_width}:-2",
+        "-q:v",
+        "8",
+        dest,
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0 or not Path(dest).is_file():
+        cmd_soft = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-ss",
+            f"{t:.3f}",
+            "-i",
+            source,
+            "-frames:v",
+            "1",
+            "-vf",
+            f"scale={scale_width}:-2",
+            "-q:v",
+            "8",
+            dest,
+        ]
+        proc = subprocess.run(cmd_soft, capture_output=True, text=True, check=False)
+        if proc.returncode != 0 or not Path(dest).is_file():
+            # Retry at t=0 (short clips / black first second).
+            if t > 0:
+                return ensure_folder_thumb(
+                    source, scale_width=scale_width, seek=0.0, cache_dir=cache_dir
+                )
+            detail = (proc.stderr or "ffmpeg thumb failed").strip().splitlines()
+            message = detail[-1] if detail else "ffmpeg thumb failed"
+            raise RuntimeError(f"folder thumb failed for {source}: {message}")
+    return dest
 
 
 def _run_proxy_ffmpeg(
@@ -676,14 +872,11 @@ def lossless_remove_range(
 ) -> None:
     """Lossless delete [start, end) — keep everything outside that window.
 
-    Fast paths (single stream-copy, no concat):
+    Fast paths (single stream-copy):
     - delete from start → keep tail with ``-ss end``
     - delete through end → keep head with ``-t start``
-    Middle deletes use two parts + concat under ``cucut_tmp_dir()`` (not ``/tmp``).
+    Middle deletes use one concat demuxer pass (``inpoint``/``outpoint``).
     """
-    import os
-    import tempfile
-
     if end <= start:
         raise ValueError("end must be greater than start")
     duration = probe_duration(source)
@@ -698,6 +891,7 @@ def lossless_remove_range(
 
     # Delete prefix [0, end) → keep [end, duration)
     if remove_start <= 0.05:
+        keep_dur = max(0.0, duration - remove_end)
         cmd = [
             "ffmpeg",
             "-hide_banner",
@@ -712,7 +906,20 @@ def lossless_remove_range(
             "make_zero",
             output,
         ]
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        proc = subprocess.Popen(
+            cmd,
+            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            text=True,
+        )
+        assert proc.stderr is not None
+        for line in proc.stderr:
+            if on_progress and keep_dur > 0:
+                match = TIME_LINE.search(line)
+                if match:
+                    current = parse_hms(f"{match.group(1)}:{match.group(2)}:{match.group(3)}")
+                    on_progress(min(100.0, current / keep_dur * 100.0))
+        proc.wait()
         if proc.returncode != 0:
             raise RuntimeError(f"ffmpeg keep-tail failed (exit {proc.returncode})")
         if on_progress:
@@ -725,53 +932,10 @@ def lossless_remove_range(
         lossless_cut_range(source, output, 0.0, remove_start, on_progress=on_progress)
         return
 
-    # Middle delete — two parts + concat on FAST/info scratch
-    parts: list[str] = []
-    with tempfile.TemporaryDirectory(prefix="cucut-rm-", dir=cucut_tmp_dir()) as tmp:
-        part_a = os.path.join(tmp, "a.mp4")
-        lossless_cut_range(source, part_a, 0.0, remove_start)
-        parts.append(part_a)
-
-        part_b = os.path.join(tmp, "b.mp4")
-        cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-y",
-            "-ss",
-            f"{remove_end:.6f}",
-            "-i",
-            source,
-            "-c",
-            "copy",
-            "-avoid_negative_ts",
-            "make_zero",
-            part_b,
-        ]
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        if proc.returncode != 0:
-            raise RuntimeError(f"ffmpeg tail copy failed (exit {proc.returncode})")
-        parts.append(part_b)
-
-        list_path = os.path.join(tmp, "list.txt")
-        with open(list_path, "w", encoding="utf-8") as handle:
-            for part in parts:
-                handle.write(f"file '{part}'\n")
-        cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-y",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            list_path,
-            "-c",
-            "copy",
-            output,
-        ]
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        if proc.returncode != 0:
-            raise RuntimeError(f"ffmpeg concat failed (exit {proc.returncode})")
-        if on_progress:
-            on_progress(100.0)
+    # Middle delete — one concat demuxer pass (inpoint/outpoint), not two temp copies.
+    concat_keep_regions(
+        source,
+        output,
+        [Interval(0.0, remove_start), Interval(remove_end, duration)],
+        on_progress=on_progress,
+    )

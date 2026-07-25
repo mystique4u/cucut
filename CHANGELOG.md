@@ -11,21 +11,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `scan --mode dji` / `pipeline --mode dji`: mostly-static camera detect (-20dB, scale 160)
   for DJI “camera died” scenes where only part of the frame still moves
-- `cucut review <csv>`: local web UI to accept/reject segments before `trim`
-  (optional: `pip install 'cucut[web]'`)
+- `cucut review [csv] [--workspace DIR]`: local web UI to accept/reject segments before `trim`
+  (optional: `pip install 'cucut[web]'`; CSV path optional — created empty if omitted/missing)
+  - **Workspace flow**: Open workspace (folder picker) → Segments | Folder tabs
+    - Segments: Scan / Rescan / Stop (manual only — no auto-scan on open); mode `dji`/`fast`/`default`
+    - Folder: lists videos in the workspace with cheap seek thumbnails, duration,
+      and metadata (e.g. `4K · 12:34 · HEVC`)
+    - Artifacts under `<workspace>/.cucut/` (`segments.csv`, `tmp/`, filmstrip/proxy caches)
+  - Segments list auto-reloads from CSV (no manual Reload button)
+  - Jobs panel: **Clear** removes finished (ready/error) job history from the sidebar
   - **Filmstrip-first preview**: sparse seek JPEGs (~every 10s) for fast In/Out marking —
     does not re-encode the whole timeline (HTML5 player swap cannot fix 10-bit HEVC)
   - Optional continuous H.264 scrubbing proxy (GPU NVENC queue, one encode at a time;
     320p / 2 fps) via **Build continuous proxy**
   - Quick cut: mark In/Out (`I`/`O`) as a **delete** window; lossless save as
     `*.cut.MP4` **next to the source** (same folder/disk), with on-screen progress
-    (cheap single-copy when deleting head/tail-to-EOF; concat only for true middle cuts;
-    Out within ~12 s of EOF, or last filmstrip thumb / **Out = end**, counts as delete-to-end)
+    (cheap single-copy when deleting head/tail-to-EOF; middle cuts = one concat demuxer
+    pass with progress, not two full temp copies; Out within ~12 s of EOF, or last
+    filmstrip thumb / **Out = end**, counts as delete-to-end)
   - Review UI: **Open in VLC/mpv** for fine seek on the original HEVC
-  - Review UI: **Folder** sidebar tab — browse any directory and list MP4/MOV files
+  - Review UI: **Jobs** sidebar panel — live watcher for scan / filmstrip / proxy / cut
+    background work (status + progress); folder filesystem picker for Open workspace
 
 ### Fixed
 
+- Middle quick-cut no longer uses two full temp copies (single concat demuxer pass + progress)
+- Opening a workspace no longer auto-starts a folder scan
 - Close open freezedetect segments at EOF (ffmpeg often omits `freeze_end`)
 - Pipeline/scan skip unreadable videos (e.g. incomplete MP4 without moov) instead of aborting
 - Checkpoint stage CSV after each file so a mid-run failure keeps partial results

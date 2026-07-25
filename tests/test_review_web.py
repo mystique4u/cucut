@@ -293,9 +293,224 @@ def test_browse_lists_folder_videos(tmp_path):
     from fastapi.testclient import TestClient
 
     client = TestClient(app)
-    data = client.get("/api/browse", params={"dir": str(tmp_path)}).json()
+    with patch(
+        "cucut.web.app.probe_video_info",
+        return_value={
+            "width": 3840,
+            "height": 2160,
+            "codec": "hevc",
+            "duration": 12.0,
+            "fps": 29.97,
+            "res_label": "4K",
+            "label": "4K 3840x2160 HEVC",
+        },
+    ):
+        data = client.get("/api/browse", params={"dir": str(tmp_path)}).json()
     assert data["dir"] == str(tmp_path.resolve())
     types = {e["name"]: e["type"] for e in data["entries"]}
     assert types["clip.mp4"] == "file"
     assert types["sub"] == "dir"
     assert "note.txt" not in types
+    clip = next(e for e in data["entries"] if e["name"] == "clip.mp4")
+    assert clip["meta_label"] == "4K 3840x2160 HEVC"
+    assert clip["res_label"] == "4K"
+    assert clip["duration_label"] == "0:12"
+    assert "thumb_url" in clip
+    assert clip["thumb_url"].startswith("/api/thumb?")
+
+    with patch("cucut.web.app.ensure_folder_thumb", return_value=str(tmp_path / "t.jpg")):
+        (tmp_path / "t.jpg").write_bytes(b"jpeg")
+        thumb = client.get("/api/thumb", params={"path": str(video)})
+        assert thumb.status_code == 200
+        assert thumb.content == b"jpeg"
+
+    jobs = client.get("/api/jobs").json()
+    assert "jobs" in jobs
+    assert jobs["active"] == 0
+
+
+def test_review_creates_missing_csv(tmp_path):
+    pytest = __import__("pytest")
+    pytest.importorskip("fastapi")
+
+    csv_path = tmp_path / "fresh.csv"
+    assert not csv_path.exists()
+    app = create_app(csv_path)
+    assert csv_path.is_file()
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    state = client.get("/api/state").json()
+    assert state["segments"] == []
+    assert state["videos"] == []
+    assert Path(state["csv_path"]) == csv_path.resolve()
+
+
+def test_scan_start_updates_csv(tmp_path):
+    pytest = __import__("pytest")
+    pytest.importorskip("fastapi")
+
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"fake")
+    csv_path = tmp_path / "segments.csv"
+    write_segments(csv_path, [])
+    app = create_app(csv_path)
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    row = SegmentRow(
+        path=str(video),
+        seg_start=1.0,
+        seg_end=6.0,
+        duration=60.0,
+        dead_sec=5.0,
+        confidence="high",
+        action="review",
+        reviewed="no",
+    )
+
+    def _scan(root, output, **kwargs):
+        write_segments(output, [row])
+        on_file = kwargs.get("on_file")
+        if on_file:
+            on_file(video, 1, 1)
+            on_file(video, 1, 1, 100.0)
+        return [row], 1
+
+    with patch("cucut.web.app.scan_directory", side_effect=_scan):
+        started = client.post(
+            "/api/scan/start",
+            json={"dir": str(tmp_path), "mode": "dji", "output": str(csv_path)},
+        )
+        assert started.status_code == 200
+        assert started.json()["ok"] is True
+
+        import time
+
+        status = {"status": "queued"}
+        for _ in range(50):
+            status = client.get("/api/scan/status").json()
+            if status["status"] in {"ready", "error"}:
+                break
+            time.sleep(0.05)
+        assert status["status"] == "ready", status
+        assert status["segments"] == 1
+
+        state = client.get("/api/state").json()
+        assert len(state["segments"]) == 1
+        assert state["videos"][0]["name"] == "clip.mp4"
+
+        jobs = client.get("/api/jobs").json()
+        kinds = {j["kind"] for j in jobs["jobs"]}
+        assert "scan" in kinds
+
+        cleared = client.post("/api/jobs/clear").json()
+        assert cleared["ok"] is True
+        assert cleared["removed"] >= 1
+        assert client.get("/api/jobs").json()["jobs"] == []
+
+
+def test_browse_roots_and_dirs_only(tmp_path):
+    pytest = __import__("pytest")
+    pytest.importorskip("fastapi")
+
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "clip.mp4").write_bytes(b"x")
+    csv_path = tmp_path / "segments.csv"
+    write_segments(csv_path, [])
+    app = create_app(csv_path)
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    roots = client.get("/api/browse/roots").json()
+    assert roots["roots"]
+    assert any(r["path"] for r in roots["roots"])
+
+    data = client.get(
+        "/api/browse",
+        params={"dir": str(tmp_path), "dirs_only": True, "meta": False},
+    ).json()
+    names = {e["name"] for e in data["entries"]}
+    assert "sub" in names
+    assert "clip.mp4" not in names
+
+
+def test_workspace_set_and_paths(tmp_path):
+    pytest = __import__("pytest")
+    pytest.importorskip("fastapi")
+
+    csv_path = tmp_path / "segments.csv"
+    write_segments(csv_path, [])
+    app = create_app(csv_path)
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    state = client.get("/api/state").json()
+    assert Path(state["workspace"]) == tmp_path.resolve()
+    assert Path(state["tmp"]) == (tmp_path / ".cucut" / "tmp").resolve()
+    assert Path(state["proxies"]) == (tmp_path / ".cucut" / "proxies").resolve()
+
+    other = tmp_path / "ws2"
+    set_res = client.post("/api/workspace", json={"path": str(other)})
+    assert set_res.status_code == 200
+    body = set_res.json()
+    assert Path(body["workspace"]) == other.resolve()
+    assert Path(body["csv_path"]) == (other / ".cucut" / "segments.csv").resolve()
+    assert (other / ".cucut" / "tmp").is_dir()
+    assert (other / ".cucut" / "proxies").is_dir()
+    assert (other / ".cucut" / "segments.csv").is_file()
+
+
+def test_jobs_lists_queued_cut(tmp_path, monkeypatch):
+    pytest = __import__("pytest")
+    pytest.importorskip("fastapi")
+
+    proxy_dir = tmp_path / "proxies"
+    proxy_dir.mkdir()
+    monkeypatch.setenv("CUCUT_PROXY_DIR", str(proxy_dir))
+
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"fake")
+    csv_path = tmp_path / "segments.csv"
+    write_segments(
+        csv_path,
+        [
+            SegmentRow(
+                path=str(video),
+                seg_start=0.0,
+                seg_end=1.0,
+                duration=60.0,
+                dead_sec=1.0,
+                confidence="high",
+                action="review",
+                reviewed="no",
+            )
+        ],
+    )
+    app = create_app(csv_path)
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+
+    import threading
+
+    gate = threading.Event()
+
+    def _slow_cut(source, output, start, end, *, on_progress=None):
+        gate.wait(timeout=2.0)
+        if on_progress:
+            on_progress(100.0)
+
+    with (
+        patch("cucut.web.app.lossless_remove_range", side_effect=_slow_cut),
+        patch("cucut.web.app.remove_range_strategy", return_value="keep-head"),
+    ):
+        client.post(
+            "/api/quickcut",
+            json={"path": str(video), "start": 10.0, "end": 50.0},
+        )
+        jobs = client.get("/api/jobs").json()
+        kinds = {j["kind"] for j in jobs["jobs"]}
+        assert "cut" in kinds
+        assert jobs["active"] >= 1
+        gate.set()

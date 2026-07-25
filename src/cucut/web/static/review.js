@@ -17,6 +17,8 @@
     browseDir: null,
     browseParent: null,
     browseEntries: [],
+    csvPath: "",
+    workspace: "",
   };
 
   const videoList = document.getElementById("video-list");
@@ -40,8 +42,43 @@
   const markOutLabel = document.getElementById("mark-out-label");
   const btnSaveCut = document.getElementById("btn-save-cut");
   const toast = document.getElementById("toast");
-  const folderBar = document.getElementById("folder-bar");
-  const folderPathInput = document.getElementById("folder-path");
+  const scanModeSelect = document.getElementById("scan-mode");
+  const scanRecursive = document.getElementById("scan-recursive");
+  const btnScanStart = document.getElementById("btn-scan-start");
+  const scanHint = document.getElementById("scan-hint");
+  const segmentsTools = document.getElementById("segments-tools");
+  const csvPathEl = document.getElementById("csv-path");
+  const workspaceNameEl = document.getElementById("workspace-name");
+  const folderPicker = document.getElementById("folder-picker");
+  const pickerTitle = document.getElementById("picker-title");
+  const pickerRoots = document.getElementById("picker-roots");
+  const pickerPath = document.getElementById("picker-path");
+  const pickerList = document.getElementById("picker-list");
+  const pickerUp = document.getElementById("picker-up");
+
+  function pathUnderWorkspace(path) {
+    if (!state.workspace || !path) return false;
+    const root = state.workspace.replace(/\/+$/, "");
+    const p = String(path).replace(/\/+$/, "");
+    return p === root || p.startsWith(root + "/");
+  }
+
+  function updateScanButton() {
+    const hasSegs = state.videos.length > 0;
+    btnScanStart.textContent = hasSegs ? "Rescan" : "Scan";
+    scanHint.textContent = hasSegs
+      ? "Rescan this workspace · replaces Segments CSV"
+      : "No scan yet — press Scan for this workspace";
+  }
+
+  const pickerState = {
+    open: false,
+    dir: "",
+    parent: null,
+    selected: null,
+    onSelect: null,
+    title: "Choose folder",
+  };
 
   function fmt(sec) {
     const s = Math.max(0, sec);
@@ -60,38 +97,188 @@
     showToast._t = setTimeout(() => toast.classList.add("hidden"), 6000);
   }
 
+  async function loadPickerRoots() {
+    const res = await fetch("/api/browse/roots");
+    const data = await res.json().catch(() => ({}));
+    pickerRoots.innerHTML = "";
+    for (const root of data.roots || []) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "picker-root";
+      btn.textContent = root.label;
+      btn.title = root.path;
+      btn.addEventListener("click", () => loadPickerDir(root.path));
+      pickerRoots.appendChild(btn);
+    }
+  }
+
+  function renderPickerList(entries) {
+    pickerList.innerHTML = "";
+    const dirs = (entries || []).filter((e) => e.type === "dir");
+    if (!dirs.length) {
+      pickerList.innerHTML = '<li class="picker-empty">No subfolders here</li>';
+      return;
+    }
+    for (const e of dirs) {
+      const li = document.createElement("li");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className =
+        "picker-item" + (pickerState.selected === e.path ? " selected" : "");
+      btn.innerHTML = `<span class="picker-name">${escapeHtml(e.name)}/</span>`;
+      btn.addEventListener("click", () => {
+        pickerState.selected = e.path;
+        renderPickerList(entries);
+      });
+      btn.addEventListener("dblclick", () => loadPickerDir(e.path));
+      li.appendChild(btn);
+      pickerList.appendChild(li);
+    }
+  }
+
+  async function loadPickerDir(dir) {
+    const q = new URLSearchParams({
+      meta: "false",
+      dirs_only: "true",
+    });
+    if (dir) q.set("dir", dir);
+    const res = await fetch(`/api/browse?${q}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(data.detail || "Browse failed", false);
+      return;
+    }
+    pickerState.dir = data.dir;
+    pickerState.parent = data.parent;
+    pickerState.selected = data.dir;
+    pickerPath.value = data.dir;
+    pickerUp.disabled = !data.parent;
+    renderPickerList(data.entries || []);
+    for (const btn of pickerRoots.querySelectorAll(".picker-root")) {
+      btn.classList.toggle("active", btn.title === data.dir);
+    }
+  }
+
+  function closeFolderPicker() {
+    pickerState.open = false;
+    pickerState.onSelect = null;
+    folderPicker.classList.add("hidden");
+  }
+
+  async function openFolderPicker({ title, startDir, onSelect }) {
+    pickerState.open = true;
+    pickerState.onSelect = onSelect;
+    pickerState.title = title || "Choose folder";
+    pickerTitle.textContent = pickerState.title;
+    folderPicker.classList.remove("hidden");
+    await loadPickerRoots();
+    await loadPickerDir(startDir || state.workspace || state.browseDir || "");
+    pickerPath.focus();
+  }
+
+  function confirmFolderPicker() {
+    const path = pickerState.selected || pickerState.dir || pickerPath.value.trim();
+    if (!path) {
+      showToast("Pick a folder first", false);
+      return;
+    }
+    const cb = pickerState.onSelect;
+    closeFolderPicker();
+    if (cb) cb(path);
+  }
+
+  let lastSegmentsSig = "";
+
+  function segmentsSig(segments, videos) {
+    return JSON.stringify({
+      videos: (videos || []).map((v) => [v.path, v.count, v.remove, v.keep, v.pending]),
+      segs: (segments || []).map((s) => [s.index, s.action, s.reviewed, s.path]),
+    });
+  }
+
   async function loadState() {
     const res = await fetch("/api/state");
     const data = await res.json();
+    const sig = segmentsSig(data.segments, data.videos);
+    const changed = sig !== lastSegmentsSig;
+    lastSegmentsSig = sig;
     state.segments = data.segments;
     state.videos = data.videos;
-    if (!state.browseDir && data.browse_dir) state.browseDir = data.browse_dir;
-    renderSidebar();
-    if (state.currentPath) selectVideo(state.currentPath);
+    state.csvPath = data.csv_path || "";
+    state.workspace = data.workspace || "";
+    if (csvPathEl && state.csvPath) {
+      csvPathEl.textContent = `CSV: ${state.csvPath}`;
+      csvPathEl.title = state.csvPath;
+    }
+    if (workspaceNameEl && state.workspace) {
+      workspaceNameEl.textContent = state.workspace;
+      workspaceNameEl.title = state.workspace;
+    }
+    if (!state.browseDir || !pathUnderWorkspace(state.browseDir)) {
+      state.browseDir = state.workspace || data.browse_dir || null;
+    }
+    updateScanButton();
+    if (changed || state.sidebarMode === "folder") {
+      renderSidebar();
+    }
+    if (changed && state.currentPath && state.sidebarMode === "segments") {
+      selectVideo(state.currentPath);
+    } else if (state.currentPath && changed) {
+      renderSegments();
+      renderTimeline();
+    }
   }
 
   function setSidebarMode(mode) {
     state.sidebarMode = mode;
     document.getElementById("tab-segments").classList.toggle("active", mode === "segments");
     document.getElementById("tab-folder").classList.toggle("active", mode === "folder");
-    folderBar.classList.toggle("hidden", mode !== "folder");
+    segmentsTools.classList.toggle("hidden", mode !== "segments");
     renderSidebar();
-    if (mode === "folder") loadFolder(state.browseDir);
+    if (mode === "folder") loadFolder(state.workspace);
+    if (mode === "segments") refreshSegments();
+  }
+
+  async function refreshSegments({ reread = true } = {}) {
+    try {
+      if (reread) {
+        const res = await fetch("/api/reload", { method: "POST" });
+        if (!res.ok) return;
+      }
+      await loadState();
+    } catch {
+      /* ignore */
+    }
   }
 
   async function loadFolder(dir) {
-    const q = dir ? `?dir=${encodeURIComponent(dir)}` : "";
-    const res = await fetch(`/api/browse${q}`);
+    const root = state.workspace;
+    let target = dir || root;
+    if (root && target && !pathUnderWorkspace(target)) {
+      target = root;
+    }
+    const q = new URLSearchParams();
+    if (target) q.set("dir", target);
+    const res = await fetch(`/api/browse?${q}`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       showToast(data.detail || "Browse failed", false);
       return;
     }
     state.browseDir = data.dir;
-    state.browseParent = data.parent;
+    const parent = data.parent;
+    state.browseParent =
+      parent && root && pathUnderWorkspace(parent) && parent !== root ? parent : null;
+    // Allow Up to workspace root when inside a subfolder
+    if (parent && root && parent === root && data.dir !== root) {
+      state.browseParent = root;
+    } else if (data.dir === root) {
+      state.browseParent = null;
+    } else if (parent && pathUnderWorkspace(parent)) {
+      state.browseParent = parent;
+    }
     state.browseEntries = data.entries || [];
-    folderPathInput.value = data.dir;
-    renderSidebar();
+    if (state.sidebarMode === "folder") renderSidebar();
   }
 
   function renderSidebar() {
@@ -104,8 +291,24 @@
 
   function renderFolderList() {
     videoList.innerHTML = "";
+    const up = state.browseParent;
+    if (up) {
+      const liUp = document.createElement("li");
+      const btnUp = document.createElement("button");
+      btnUp.type = "button";
+      btnUp.className = "video-item dir";
+      btnUp.innerHTML =
+        `<span class="video-name">../</span>` +
+        `<span class="video-meta">up</span>`;
+      btnUp.addEventListener("click", () => loadFolder(up));
+      liUp.appendChild(btnUp);
+      videoList.appendChild(liUp);
+    }
     if (!state.browseEntries.length) {
-      videoList.innerHTML = '<li class="empty">No folders or videos here</li>';
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = "No videos in this workspace folder";
+      videoList.appendChild(li);
       return;
     }
     for (const e of state.browseEntries) {
@@ -122,10 +325,22 @@
         btn.addEventListener("click", () => loadFolder(e.path));
       } else {
         const inCsv = state.videos.some((v) => v.path === e.path);
+        const bits = [];
+        if (e.res_label) bits.push(e.res_label);
+        else if (e.meta_label) bits.push(String(e.meta_label).split(" ")[0]);
+        if (e.duration_label) bits.push(e.duration_label);
+        if (e.codec) bits.push(String(e.codec).toUpperCase());
+        if (e.size_label) bits.push(e.size_label);
+        if (inCsv) bits.push("scanned");
+        const thumb = e.thumb_url
+          ? `<img class="video-thumb" src="${escapeHtml(e.thumb_url)}" alt="" loading="lazy" />`
+          : `<span class="video-thumb placeholder" aria-hidden="true"></span>`;
+        btn.className += " with-thumb";
         btn.innerHTML =
+          thumb +
+          `<span class="video-text">` +
           `<span class="video-name">${escapeHtml(e.name)}</span>` +
-          `<span class="video-meta">${escapeHtml(e.size_label || "")}` +
-          (inCsv ? " · in CSV" : "") +
+          `<span class="video-meta">${escapeHtml(bits.join(" · "))}</span>` +
           `</span>`;
         btn.addEventListener("click", () => selectVideo(e.path));
       }
@@ -137,7 +352,7 @@
   function renderVideoList() {
     videoList.innerHTML = "";
     if (!state.videos.length) {
-      videoList.innerHTML = '<li class="empty">No segments in CSV — try Folder tab</li>';
+      videoList.innerHTML = '<li class="empty">No segments yet — press Scan</li>';
       return;
     }
     for (const v of state.videos) {
@@ -155,6 +370,36 @@
       li.appendChild(btn);
       videoList.appendChild(li);
     }
+  }
+
+  async function startScan({ auto = false } = {}) {
+    const dir = state.workspace;
+    if (!dir) {
+      showToast("Open a workspace folder first", false);
+      return false;
+    }
+    const body = {
+      dir,
+      mode: scanModeSelect.value || "dji",
+      recursive: !!scanRecursive.checked,
+    };
+    const res = await fetch("/api/scan/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(data.detail || "Scan failed to start", false);
+      return false;
+    }
+    showToast(
+      auto
+        ? `Auto-scan started (${data.mode})`
+        : `Scan started (${data.mode}) → ${data.output || "CSV"}`
+    );
+    scheduleJobsPoll(1);
+    return true;
   }
 
   function escapeHtml(s) {
@@ -666,7 +911,7 @@
     const strategyLabel = (s) => {
       if (s === "keep-head") return "Cheap keep-head (delete to end)";
       if (s === "keep-tail") return "Cheap keep-tail (delete from start)";
-      if (s === "middle-concat") return "Middle delete (two-part concat)";
+      if (s === "middle-concat") return "Middle delete (concat)";
       return "Lossless delete";
     };
 
@@ -869,23 +1114,84 @@
 
   document.getElementById("btn-accept-all").addEventListener("click", () => setAll("remove"));
   document.getElementById("btn-reject-all").addEventListener("click", () => setAll("keep"));
-  document.getElementById("btn-reload").addEventListener("click", async () => {
-    await fetch("/api/reload", { method: "POST" });
-    await loadState();
-  });
   document.getElementById("tab-segments").addEventListener("click", () => setSidebarMode("segments"));
   document.getElementById("tab-folder").addEventListener("click", () => setSidebarMode("folder"));
-  document.getElementById("btn-folder-go").addEventListener("click", () => {
-    loadFolder(folderPathInput.value.trim());
+
+  async function applyWorkspace(path) {
+    const res = await fetch("/api/workspace", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(data.detail || "Could not open workspace", false);
+      return;
+    }
+    showToast(`Workspace → ${data.workspace}`);
+    await loadState();
+    setSidebarMode("segments");
+    await loadFolder(state.workspace);
+  }
+
+  async function cancelScan() {
+    const res = await fetch("/api/scan/cancel", { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(data.detail || "Could not cancel scan", false);
+      return;
+    }
+    showToast("Scan cancel requested");
+    scheduleJobsPoll(1);
+  }
+
+  document.getElementById("btn-workspace-open").addEventListener("click", () => {
+    openFolderPicker({
+      title: "Open workspace",
+      startDir: state.workspace,
+      onSelect: async (path) => {
+        await applyWorkspace(path);
+      },
+    });
   });
-  document.getElementById("btn-folder-up").addEventListener("click", () => {
-    if (state.browseParent) loadFolder(state.browseParent);
+  document.getElementById("picker-close").addEventListener("click", closeFolderPicker);
+  document.getElementById("picker-cancel").addEventListener("click", closeFolderPicker);
+  document.getElementById("picker-select").addEventListener("click", confirmFolderPicker);
+  document.getElementById("picker-go").addEventListener("click", () => {
+    loadPickerDir(pickerPath.value.trim());
   });
-  folderPathInput.addEventListener("keydown", (ev) => {
+  pickerUp.addEventListener("click", () => {
+    if (pickerState.parent) loadPickerDir(pickerState.parent);
+  });
+  pickerPath.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") {
       ev.preventDefault();
-      loadFolder(folderPathInput.value.trim());
+      loadPickerDir(pickerPath.value.trim());
     }
+  });
+  folderPicker.addEventListener("click", (ev) => {
+    if (ev.target === folderPicker) closeFolderPicker();
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (!pickerState.open) return;
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      closeFolderPicker();
+    }
+  });
+  btnScanStart.addEventListener("click", () => startScan());
+  document.getElementById("btn-scan-stop").addEventListener("click", () => cancelScan());
+  document.getElementById("btn-jobs-clear").addEventListener("click", async () => {
+    const res = await fetch("/api/jobs/clear", { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(data.detail || "Could not clear jobs", false);
+      return;
+    }
+    lastScanStatus = "";
+    const n = data.removed || 0;
+    showToast(n ? `Cleared ${n} finished job(s)` : "No finished jobs to clear");
+    await refreshJobs();
   });
   document.getElementById("btn-mark-in").addEventListener("click", setMarkIn);
   document.getElementById("btn-mark-out").addEventListener("click", setMarkOut);
@@ -912,6 +1218,114 @@
     }
     showToast(`Opened in ${data.player || "player"} @ ${fmt(data.time || 0)}`);
   });
+
+  const jobsList = document.getElementById("jobs-list");
+  const jobsCount = document.getElementById("jobs-count");
+
+  function kindLabel(kind, strategy) {
+    if (kind === "cut") {
+      if (strategy === "keep-head") return "cut·head";
+      if (strategy === "keep-tail") return "cut·tail";
+      if (strategy === "middle-concat") return "cut·mid";
+      return "cut";
+    }
+    if (kind === "scan") {
+      if (strategy) return `scan·${strategy}`;
+      return "scan";
+    }
+    if (kind === "filmstrip") return "strip";
+    if (kind === "proxy") return "proxy";
+    return kind;
+  }
+
+  let lastScanStatus = "";
+
+  function renderJobs(data) {
+    const jobs = data.jobs || [];
+    const active = data.active || 0;
+    jobsCount.textContent = active ? `${active} active` : "idle";
+    jobsCount.classList.toggle("idle", !active);
+    if (!jobs.length) {
+      jobsList.innerHTML = '<li class="jobs-empty">No background jobs</li>';
+      return;
+    }
+    jobsList.innerHTML = "";
+    for (const j of jobs) {
+      const li = document.createElement("li");
+      const st = String(j.status || "");
+      li.className = "job-row" + (st === "error" ? " error" : st === "ready" ? " ready" : "");
+      const pct = Math.max(0, Math.min(100, Math.round(Number(j.progress) || 0)));
+      const meta =
+        j.error ||
+        j.detail ||
+        (j.output ? String(j.output).split(/[/\\]/).pop() : "") ||
+        `${pct}%`;
+      li.innerHTML =
+        `<div class="job-top">` +
+        `<span class="job-kind">${escapeHtml(kindLabel(j.kind, j.strategy))}</span>` +
+        `<span class="job-status">${escapeHtml(st)} ${pct}%</span>` +
+        `</div>` +
+        `<div class="job-name" title="${escapeHtml(j.path || "")}">${escapeHtml(j.name || "?")}</div>` +
+        `<div class="job-bar"><span style="width:${pct}%"></span></div>` +
+        (meta
+          ? `<div class="job-meta">${escapeHtml(meta)}</div>`
+          : "");
+      li.addEventListener("click", () => {
+        if (j.kind === "scan") {
+          setSidebarMode("segments");
+          return;
+        }
+        if (j.path) selectVideo(j.path);
+      });
+      jobsList.appendChild(li);
+    }
+  }
+
+  async function refreshJobs() {
+    try {
+      const res = await fetch("/api/jobs");
+      if (!res.ok) return;
+      const data = await res.json();
+      renderJobs(data);
+      const scanJob = (data.jobs || []).find((j) => j.kind === "scan");
+      if (scanJob) {
+        const key = `${scanJob.status}:${scanJob.progress}:${scanJob.error || ""}`;
+        if (
+          scanJob.status === "ready" &&
+          lastScanStatus &&
+          !lastScanStatus.startsWith("ready")
+        ) {
+          showToast("Scan finished");
+          await refreshSegments();
+          setSidebarMode("segments");
+        } else if (scanJob.status === "error" && lastScanStatus !== key) {
+          showToast(scanJob.error || "Scan failed", false);
+        } else if (
+          scanJob.status === "cancelled" &&
+          lastScanStatus &&
+          !lastScanStatus.startsWith("cancelled")
+        ) {
+          showToast("Scan cancelled");
+        }
+        lastScanStatus = key;
+      }
+      return data.active || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  let jobsTimer = null;
+  function scheduleJobsPoll(active) {
+    if (jobsTimer) clearTimeout(jobsTimer);
+    jobsTimer = setTimeout(async () => {
+      const n = await refreshJobs();
+      if (state.sidebarMode === "segments") {
+        await refreshSegments({ reread: n > 0 });
+      }
+      scheduleJobsPoll(n);
+    }, active ? 800 : 4000);
+  }
 
   document.addEventListener("keydown", (ev) => {
     if (!state.currentPath) return;
@@ -944,5 +1358,6 @@
     }
   });
 
+  refreshJobs().then((n) => scheduleJobsPoll(n));
   loadState();
 })();
